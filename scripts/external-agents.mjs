@@ -12,7 +12,7 @@
 import process from "node:process";
 
 import { parseArgs } from "./lib/args.mjs";
-import { extractPath, normalizeArgv } from "./lib/tokenize.mjs";
+import { extractOption, extractPath, normalizeArgv } from "./lib/tokenize.mjs";
 import { doctor } from "./lib/cmd/doctor.mjs";
 import { register, unregister, workspaces } from "./lib/cmd/register.mjs";
 import { routes } from "./lib/cmd/routes.mjs";
@@ -59,6 +59,11 @@ const DELEGATE_SPEC = {
   valueOptions: ["task", "model", "route", "role", "timeout", "dir", "budget"],
   boolOptions: ["write", "background", "wait", "allow-dirty-tree", "unattended"]
 };
+
+// Every option delegate recognises. extractOption reads --dir's value from
+// the raw argument string and needs to know where that value ends: at the
+// next recognised option, because the slash command puts --dir first.
+const DELEGATE_OPTIONS = [...DELEGATE_SPEC.valueOptions, ...DELEGATE_SPEC.boolOptions];
 
 const COMMANDS = {
   doctor: () => {
@@ -117,8 +122,13 @@ const COMMANDS = {
     return 0;
   },
 
-  delegate: async (argv) => {
-    const { options, positionals } = parseArgs(argv, DELEGATE_SPEC);
+  delegate: async (argv, raw) => {
+    // --dir is read from the raw argument string, not from parsed tokens:
+    // parseArgs stops an option value at its first space, so an unquoted
+    // `--dir C:\Program Files\repo` would arrive as `C:\Program` with
+    // `Files\repo` stranded in positionals and silently dropped.
+    const { value: dir, rest: args } = extractOption(argv, raw, "dir", DELEGATE_OPTIONS);
+    const { options, positionals } = parseArgs(args, DELEGATE_SPEC);
 
     // The task can come from --task or from whatever is left over, so a long
     // handoff after `--` does not have to be quoted twice.
@@ -141,7 +151,10 @@ const COMMANDS = {
         route: options.route ?? "standard",
         role: options.role ?? "builder",
         write: Boolean(options.write),
-        directory: options.dir,
+        // options.dir can only be set when the raw string held no bare --dir
+        // token (the name itself was quoted); then the parsed reading is the
+        // only one there is.
+        directory: dir ?? options.dir,
         wait: !options.background,
         timeoutSeconds: options.timeout ? Number(options.timeout) : undefined,
         budgetSeconds: options.budget ? Number(options.budget) : undefined,
