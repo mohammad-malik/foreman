@@ -1,6 +1,6 @@
 {
   "name": "external-agents",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "type": "module",
   "description": "Claude Code plugin runtime for delegating work to external models via OpenCode.",

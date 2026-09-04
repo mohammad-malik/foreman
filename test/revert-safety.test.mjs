@@ -281,3 +281,67 @@ test("index snapshots are read in a single git call", () => {
     assert.equal(baseline.indexEntries[`f${i}.txt`].mode, "100644");
   }
 });
+
+test("a planted temp file cannot be followed during restore", { skip: process.platform === "win32" }, () => {
+  // The temp path used to be predictable, so a process that dropped a symlink
+  // there would have it followed and truncated: the same data-loss path the
+  // rename was meant to close, just moved one step along. Exclusive creation
+  // plus a random suffix closes it.
+  const { root } = makeRepo();
+  const target = path.join(root, "notes.txt");
+  fs.writeFileSync(target, "mine\n");
+
+  const baseline = captureBaseline(root);
+
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "ea-planted-"));
+  const outside = path.join(outsideDir, "victim.txt");
+  fs.writeFileSync(outside, "must survive\n");
+
+  // Plant links at every temp name the old scheme could have produced.
+  for (const pid of [process.pid, process.pid + 1]) {
+    try {
+      fs.symlinkSync(outside, `${target}.external-agents-${pid}.tmp`);
+    } catch {
+      // Planting is best effort; the assertion below is what matters.
+    }
+  }
+
+  fs.writeFileSync(target, "agent edit\n");
+
+  const diff = diffAgainstBaseline(baseline);
+  revertPaths(root, baseline, diff.changed);
+
+  assert.equal(fs.readFileSync(outside, "utf8"), "must survive\n");
+  assert.equal(fs.readFileSync(target, "utf8"), "mine\n");
+});
+
+test("a restored file keeps a readable mode under a restrictive umask", { skip: process.platform === "win32" }, () => {
+  // The mode passed at creation is masked by the umask, so it has to be
+  // reapplied explicitly or a 0644 snapshot comes back 0600.
+  const { root } = makeRepo();
+  const file = path.join(root, "shared.txt");
+  fs.writeFileSync(file, "mine\n");
+  fs.chmodSync(file, 0o644);
+
+  const baseline = captureBaseline(root);
+  const previous = process.umask(0o077);
+
+  try {
+    fs.writeFileSync(file, "agent edit\n");
+    const diff = diffAgainstBaseline(baseline);
+    revertPaths(root, baseline, diff.changed);
+    assert.equal(fs.statSync(file).mode & 0o777, 0o644);
+  } finally {
+    process.umask(previous);
+  }
+});
+
+test("the source file contains no literal NUL bytes", () => {
+  // A literal NUL anywhere in the source makes git classify the whole file as
+  // binary, so diffs show only "Binary files differ" and text tooling skips
+  // it. One crept in from a generated edit and went unnoticed for a release.
+  const source = fs.readFileSync(
+    new URL("../scripts/lib/git-baseline.mjs", import.meta.url)
+  );
+  assert.equal(source.filter((byte) => byte === 0).length, 0);
+});
