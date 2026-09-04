@@ -221,3 +221,14 @@ test("a valid claim written during the corrupt-lock window is not deleted", asyn
   assert.equal(fs.existsSync(lock), true, "a parseable claim must survive quarantine");
   fs.rmSync(lock, { force: true });
 });
+
+test("ps is asked for the full command line, not a truncated one", async () => {
+  const source = await import("node:fs").then((fs) =>
+    fs.readFileSync(new URL("../scripts/lib/process.mjs", import.meta.url), "utf8")
+  );
+
+  // macOS truncates to terminal width without -ww. Both identity checks that
+  // read this look for a marker at the END of the line, so a truncated read
+  // says "not our process" about a process that is very much ours.
+  assert.match(source, /"ps", \["-ww", "-p"/);
+});

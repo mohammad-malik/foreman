@@ -224,13 +224,21 @@ export function isStalled(job, state, now = Date.now()) {
  * event log's own error events or from stderr rather than invented here.
  */
 export function judgeCodexJob(job, state) {
-  // Checked BEFORE liveness. A finished turn with a final message is a finished
-  // job whatever the process table says, and asking the log first is what stops
-  // a recycled PID holding a completed job at "running" until its budget runs
-  // out. Nothing is written after turn.completed: the edits land as patch
-  // events before it, and the message file is the last thing codex does.
+  // Both checked BEFORE liveness. A turn that has ended is a finished job
+  // whatever the process table says, and asking the log first is what stops a
+  // recycled PID holding a settled job at "running" until its budget runs out.
+  // Nothing is written after the turn ends: edits land as patch events before
+  // it, and the message file is the last thing codex does.
   if (state.parsed.turnDone && state.finalText && state.parsed.errors.length === 0) {
     return { status: "completed", error: null };
+  }
+
+  // A failed turn is just as terminal as a successful one. Leaving this to the
+  // liveness check below meant an explicit `turn.failed` on a recycled PID read
+  // as "running" until the budget expired, which is the same bug as the
+  // completed case and was missed because the fix only covered success.
+  if (state.parsed.turnDone && state.parsed.errors.length > 0) {
+    return { status: "failed", error: state.parsed.errors[0] };
   }
 
   if (state.alive) {

@@ -242,3 +242,20 @@ test("a live process that has written nothing is stuck, not busy", async () => {
   );
   assert.equal(isStalled({ startedAt: "not a date" }, { alive: true, silent: true }), false);
 });
+
+test("a failed turn is terminal, even on a pid that still looks alive", () => {
+  // The completed case was fixed for recycled pids and this one was not, so an
+  // explicit turn.failure sat at "running" until the budget expired.
+  const judged = judgeCodexJob(
+    { pid: 1 },
+    {
+      alive: true,
+      parsed: parseEventLog('{"type":"turn.failed","error":{"message":"429 rate limited"}}'),
+      finalText: null,
+      stderr: ""
+    }
+  );
+
+  assert.equal(judged.status, "failed");
+  assert.equal(judged.error, "429 rate limited");
+});

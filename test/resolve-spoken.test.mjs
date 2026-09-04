@@ -141,13 +141,14 @@ test("astra resolves by itself once its id appears upstream", () => {
   // the day it lands.
   assert.throws(() => resolveSpoken("gpt-6-astra", ["opencode/kimi-k3"]), /reserved/);
 
-  // OpenCode is astra's default, because Codex on a ChatGPT account refuses
-  // gpt-6-astra outright: "not supported when using Codex with a ChatGPT
-  // account", verified by a real 400 from the API.
-  const live = resolveSpoken("gpt-6-astra", { opencode: ["opencode/gpt-6-astra"] });
+  // Codex is astra's default, like the other OpenAI models. It spent a few
+  // hours defaulting to OpenCode because Codex refused the model on a ChatGPT
+  // account; OpenAI enabled it, and a real `codex exec -m gpt-6-astra` now
+  // returns a completed turn.
+  const live = resolveSpoken("gpt-6-astra", { codex: ["gpt-6-astra"] });
   assert.equal(live.alias, "astra");
-  assert.equal(live.backend, "opencode");
-  assert.equal(live.qualified, "opencode/gpt-6-astra");
+  assert.equal(live.backend, "codex");
+  assert.equal(live.qualified, "codex/gpt-6-astra");
 });
 
 test("promotion on one backend never moves a model's default to it", () => {

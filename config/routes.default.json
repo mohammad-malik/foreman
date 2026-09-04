@@ -110,13 +110,13 @@
     },
 
     "astra": {
-      "description": "GPT-6, shipping as gpt-6-astra. Live on the API, so it routes through OpenCode rather than Codex: a ChatGPT sign-in is refused outright for this model.",
+      "description": "GPT-6, shipping as gpt-6-astra. Live on Codex now, so it runs on the ChatGPT sign-in like sol and luna.",
 
-      "//backend": "Unlike sol and luna, this defaults to OpenCode. Codex on a ChatGPT account answers a gpt-6-astra request with a 400 saying the model is not supported for that account type, which is why the codex candidates below stay pending: if that changes, the local model cache lists it and the route promotes on its own.",
+      "//backend": "This briefly defaulted to OpenCode, because Codex on a ChatGPT account answered a gpt-6-astra request with a 400 saying the model was not supported for that account type. OpenAI has since enabled it: the local model cache lists gpt-6-astra and a real `codex exec -m gpt-6-astra` returns a completed turn. The OpenCode candidates stay pending, so if it appears there too, saying \"opencode astra\" reaches it.",
 
       "spoken": ["astra", "gpt-6-astra", "gpt6 astra", "gpt 6 astra", "gpt-6", "gpt6", "gpt 6"],
       "reserved": true,
-      "defaultBackend": "opencode",
+      "defaultBackend": "codex",
       "watchPatterns": ["gpt-6", "astra"],
       "backends": {},
 

@@ -39,7 +39,7 @@ Long jobs take `--background` and are reported when they land.
 | `glm` | glm, glm 5.3, glm flash, flash, zhipu | OpenCode | GLM 5.3 Flash on both tiers |
 | `sol` | sol, gpt 5.6 sol, gpt 5.6 | Codex | standard |
 | `luna` | luna, gpt 5.6 luna, moon | Codex | standard |
-| `astra` | astra, gpt-6-astra, gpt 6 | OpenCode | GPT-6, activates when OpenCode lists it |
+| `astra` | astra, gpt-6-astra, gpt 6 | Codex | GPT-6, live |
 
 Spoken names live in `config/routes.default.json`. Adding a model, or another
 way of saying one, is an edit to that file: no code knows what "kimi" means.

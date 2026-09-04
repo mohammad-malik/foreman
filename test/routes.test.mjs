@@ -133,19 +133,18 @@ test("listAliases reports astra as reserved with no routes", () => {
 test("a live gpt-6-astra id promotes the reserved alias to dispatchable", () => {
   // The point of reserving the alias: the day GPT-6 appears upstream it works,
   // with no edit to the route table.
-  const inventory = [...LIVE, "opencode/gpt-6-astra"];
+  // Codex is astra's configured default, so the id appearing there makes it
+  // usable with no argument and no edit to the table.
+  const inventory = { opencode: LIVE, codex: ["gpt-6-astra"] };
 
-  // OpenCode is astra's configured default, because Codex on a ChatGPT account
-  // refuses gpt-6-astra outright. So the id landing there makes it usable with
-  // no argument and no edit to the table.
   const resolved = resolveRoute("astra", "standard", inventory);
-  assert.equal(resolved.backend, "opencode");
-  assert.equal(resolved.qualified, "opencode/gpt-6-astra");
+  assert.equal(resolved.backend, "codex");
+  assert.equal(resolved.qualified, "codex/gpt-6-astra");
 
-  // And the backend it cannot run on still refuses rather than falling back.
+  // A backend with no route for it still refuses rather than falling back.
   assert.throws(
-    () => resolveRoute("astra", "standard", inventory, { backend: "codex" }),
-    /cannot run on the codex backend/
+    () => resolveRoute("astra", "standard", inventory, { backend: "opencode" }),
+    /cannot run on the opencode backend/
   );
 
   const astra = listAliases(inventory).find((entry) => entry.alias === "astra");

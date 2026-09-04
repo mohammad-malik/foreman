@@ -101,7 +101,11 @@ export function processCommandLine(pid) {
       return trimmed === "" ? null : trimmed;
     }
 
-    const output = execFileSync("ps", ["-p", String(pid), "-o", "command="], {
+    // -ww: unlimited width. Without it macOS truncates to the terminal width,
+    // and the identity checks that read this look for a marker at the END of
+    // the command line. A truncated line would read as "not our process" and
+    // could get a live job killed or failed while it was still working.
+    const output = execFileSync("ps", ["-ww", "-p", String(pid), "-o", "command="], {
       encoding: "utf8",
       timeout: 10_000
     });
