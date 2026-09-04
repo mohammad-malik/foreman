@@ -1,5 +1,10 @@
 {
   "subagent_depth": 1,
+
+  "//": "Two agents, not three. A `glm-explore` child agent was written and removed: OpenCode 1.18.16 offers no subagent-delegation tool over the server API. Even the built-in `build` agent lists only apply_patch, bash, edit, glob, grep, question, read, skill, todowrite, webfetch and websearch, so there is nothing for a parent to delegate through. Setting `permission.task` or `tools.task` changes nothing. subagent_depth is kept at 1 so nested agents stay capped if a later version enables them. The child-session discovery in the runtime is also kept: it reports what actually ran rather than what an agent claims, and returns an empty list until this works.",
+
+  "//permissions": "`permission` is the real enforcement, verified by testing: a read-only agent told to write a file had its edit denied, fell back to `echo BREACH > file` in bash, and was stopped by the bash allowlist pending a human answer. The catch-all bash rule is `ask` rather than `deny` because no pattern reliably separates a shell command that writes from one that reads, so a person decides.",
+
   "agent": {
     "external-builder": {
       "description": "Primary external worker with write access inside one repository.",
@@ -11,7 +16,6 @@
         "grep": "allow",
         "lsp": "allow",
         "edit": "allow",
-        "task": "allow",
         "external_directory": "deny",
         "webfetch": "deny",
         "websearch": "deny",
@@ -56,7 +60,6 @@
         "grep": "allow",
         "lsp": "allow",
         "edit": "deny",
-        "task": "deny",
         "external_directory": "deny",
         "webfetch": "deny",
         "websearch": "deny",
@@ -71,33 +74,6 @@
           "rg*": "allow",
           "find*": "allow",
           "*": "ask"
-        }
-      }
-    },
-
-    "glm-explore": {
-      "description": "Cheap read-only child agent for lookups, searches and dependency tracing.",
-      "mode": "subagent",
-      "permission": {
-        "read": "allow",
-        "list": "allow",
-        "glob": "allow",
-        "grep": "allow",
-        "lsp": "allow",
-        "edit": "deny",
-        "task": "deny",
-        "external_directory": "deny",
-        "webfetch": "deny",
-        "websearch": "deny",
-        "bash": {
-          "git log*": "allow",
-          "git show*": "allow",
-          "git ls-files*": "allow",
-          "ls*": "allow",
-          "cat*": "allow",
-          "rg*": "allow",
-          "find*": "allow",
-          "*": "deny"
         }
       }
     }

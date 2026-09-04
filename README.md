@@ -42,6 +42,14 @@ Long jobs take `--background` and are reported when they land.
 
 A model is never substituted. If a route is unavailable you get an error naming the live alternatives, not a quiet downgrade to something else.
 
+## No nested agents, for now
+
+OpenCode 1.18.16 offers no subagent-delegation tool over its server API, so an
+external agent cannot spawn children. This was built and removed rather than
+shipped half-working. The runtime still enumerates child sessions from the
+server, so if a later version enables delegation the reporting is already
+honest; until then that list is empty.
+
 ## What it will not do
 
 - Delegate anywhere you have not registered, or send content from a repository without `--allow-external`.
