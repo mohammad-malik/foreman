@@ -156,10 +156,56 @@ function pruneJobs(slug) {
   }
 }
 
+/**
+ * Wall-clock time the job has actually been working.
+ *
+ * Time spent waiting for a human to answer a permission request does not
+ * count. The budget exists to stop a runaway, and a job blocked on a person is
+ * the opposite of a runaway: it is doing nothing at all. Counting it killed a
+ * real job at 65 minutes that had been sitting on an unanswered prompt since
+ * minute 13, and it would kill every delegation started before someone went to
+ * bed.
+ */
 export function elapsedMs(job) {
   const start = Date.parse(job.startedAt ?? job.createdAt);
   const end = job.finishedAt ? Date.parse(job.finishedAt) : Date.now();
-  return end - start;
+
+  let blocked = job.blockedMs ?? 0;
+  if (job.awaitingSince) {
+    blocked += Math.max(0, (job.finishedAt ? Date.parse(job.finishedAt) : Date.now()) - Date.parse(job.awaitingSince));
+  }
+
+  return Math.max(0, end - start - blocked);
+}
+
+/** Total time this job has spent waiting on a person. */
+export function blockedMs(job) {
+  let blocked = job.blockedMs ?? 0;
+  if (job.awaitingSince) {
+    blocked += Math.max(0, Date.now() - Date.parse(job.awaitingSince));
+  }
+  return blocked;
+}
+
+/** Stamp the moment a job started waiting for an answer. Idempotent. */
+export function markAwaiting(job) {
+  if (job.awaitingSince) {
+    return job;
+  }
+  return updateJob(job, { status: "awaiting_permission", awaitingSince: new Date().toISOString() });
+}
+
+/** Fold the wait into blockedMs and resume. */
+export function markResumed(job) {
+  const extra = job.awaitingSince
+    ? Math.max(0, Date.now() - Date.parse(job.awaitingSince))
+    : 0;
+
+  return updateJob(job, {
+    status: "running",
+    awaitingSince: null,
+    blockedMs: (job.blockedMs ?? 0) + extra
+  });
 }
 
 export function describeElapsed(job) {

@@ -38,7 +38,12 @@ const UNATTENDED_AGENT = "external-autonomous";
 
 const DEFAULT_WAIT_MS = 120_000;
 const MAX_WAIT_MS = 300_000;
-const DEFAULT_BUDGET_MS = 15 * 60 * 1000;
+// Measured, not guessed. A real write task on the Zen route managed 11 tool
+// calls in 15 minutes, roughly 80 seconds per round trip, and was reaped by
+// the old 15 minute default having read the right files but written nothing.
+// Reading a handful of source files is the cheap part of a delegation; the
+// budget exists to stop a runaway, not to cut off ordinary work.
+const DEFAULT_BUDGET_MS = 45 * 60 * 1000;
 
 function chooseAgent(role, write, unattended) {
   const spec = ROLES[role];

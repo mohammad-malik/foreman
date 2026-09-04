@@ -86,7 +86,7 @@ export async function notify() {
       lines.push(
         `external-agents: job ${current.id} (${current.qualified ?? current.alias}) is waiting for permission` +
           (first ? ` to ${first.action}` : "") +
-          `. Answer with /external-agents:permit ${current.id} ${first?.id ?? "<request-id>"} allow|reject`
+          `. Approve with /external-agents:permit allow, or reject it with /external-agents:permit reject`
       );
       // Deliberately not marked reported: it is still blocked, and it should
       // keep asking until someone answers.

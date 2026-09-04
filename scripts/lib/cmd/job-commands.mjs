@@ -11,6 +11,7 @@ import { currentServer } from "../servers.mjs";
 import { diffAgainstBaseline, diffStat, revertPaths } from "../git-baseline.mjs";
 import {
   ACTIVE_STATUSES,
+  markResumed,
   describeElapsed,
   latestJob,
   listJobs,
@@ -101,33 +102,115 @@ export async function result(jobID) {
  * which writes a saved rule outliving the job, and no single prompt should be
  * able to widen what every future delegation may do.
  */
-export async function permit(jobID, requestID, decision) {
-  if (!requestID) {
-    throw new Error("Usage: permit <job-id> <request-id> allow|reject");
+export async function permit(...args) {
+  const tokens = args.filter((value) => value !== undefined && value !== null && value !== "");
+  const decision = tokens.length > 0 ? normalizeDecision(tokens[tokens.length - 1]) : null;
+
+  if (!decision) {
+    throw new Error(
+      [
+        "Usage: permit [job-id] [request-id] allow|reject",
+        "",
+        "The ids are optional when only one request is pending, which is the",
+        "usual case: `permit allow` is enough."
+      ].join("\n")
+    );
   }
 
-  const normalized = { allow: "once", once: "once", reject: "reject", deny: "reject" }[
-    String(decision).toLowerCase()
-  ];
+  // Everything before the decision narrows which request is meant. With
+  // nothing before it, the unique pending request is used. Copying two
+  // twenty-character ids to approve a test run is friction that gets a job
+  // left blocked, and a job left blocked is the failure this whole flow exists
+  // to avoid.
+  const hints = tokens.slice(0, -1);
+  const { job, workspace, request } = await findPendingRequest(hints);
 
-  if (!normalized) {
-    throw new Error(`Decision must be "allow" or "reject", not "${decision}".`);
-  }
-
-  const { job, workspace } = findJobAnywhere(jobID);
   const server = currentServer(workspace);
-
   if (!server) {
     throw new Error(
       `The OpenCode server for ${job.workspaceRoot} is not running, so this request can no longer be answered. The job is dead; start a new one.`
     );
   }
 
-  const api = new OpencodeApi(server);
-  await api.replyPermission(job.sessionID, requestID, normalized);
-  updateJob(job, { status: "running" });
+  await new OpencodeApi(server).replyPermission(job.sessionID, request.id, decision);
 
-  return `Replied ${normalized} to ${requestID}. Job ${job.id} continues.`;
+  // Fold the wait into blockedMs so the time spent waiting on a person is not
+  // charged against the job's budget.
+  markResumed(job);
+
+  return [
+    `Replied ${decision} to ${request.action}${request.resources?.length ? `: ${request.resources[0]}` : ""}`,
+    `Job ${job.id} continues.`
+  ].join("\n");
+}
+
+function normalizeDecision(value) {
+  return (
+    { allow: "once", once: "once", yes: "once", y: "once", reject: "reject", deny: "reject", no: "reject", n: "reject" }[
+      String(value).toLowerCase()
+    ] ?? null
+  );
+}
+
+/**
+ * Resolve which pending request a decision refers to.
+ *
+ * Hints may be a job id, a request id, or both, in any order. With none, the
+ * single pending request across all workspaces is used, and an ambiguity is
+ * reported rather than guessed at.
+ */
+async function findPendingRequest(hints) {
+  const workspaces = listWorkspaces();
+  const pending = [];
+
+  for (const workspace of workspaces) {
+    const server = currentServer(workspace);
+    if (!server) {
+      continue;
+    }
+    const api = new OpencodeApi(server, { timeout: 8000 });
+
+    for (const job of listJobs(workspace.slug)) {
+      if (!ACTIVE_STATUSES.has(job.status) || !job.sessionID) {
+        continue;
+      }
+      let requests = [];
+      try {
+        requests = await api.pendingPermissions(job.sessionID);
+      } catch {
+        continue;
+      }
+      for (const request of Array.isArray(requests) ? requests : []) {
+        pending.push({ job, workspace, request });
+      }
+    }
+  }
+
+  const matching = pending.filter(
+    ({ job, request }) => hints.length === 0 || hints.every((hint) => hint === job.id || hint === request.id)
+  );
+
+  if (matching.length === 1) {
+    return matching[0];
+  }
+
+  if (matching.length === 0) {
+    throw new Error(
+      pending.length === 0
+        ? "Nothing is waiting for permission."
+        : `No pending request matches ${hints.join(" ")}. Pending: ${pending.map(({ job, request }) => `${job.id} ${request.id}`).join(", ")}`
+    );
+  }
+
+  throw new Error(
+    [
+      `${matching.length} requests are pending, so it is not clear which you mean. Name one:`,
+      ...matching.map(
+        ({ job, request }) =>
+          `  permit ${job.id} ${request.id} allow    (${request.action}: ${(request.resources ?? [])[0] ?? ""})`
+      )
+    ].join("\n")
+  );
 }
 
 export async function cancel(jobID) {

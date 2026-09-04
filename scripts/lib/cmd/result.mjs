@@ -17,7 +17,7 @@
 import { diffAgainstBaseline, diffStat } from "../git-baseline.mjs";
 import { finalAssistantText, OpencodeApi, toolCalls, usageTotals } from "../opencode-api.mjs";
 import { currentServer } from "../servers.mjs";
-import { describeElapsed, loadJob, updateJob } from "../jobs.mjs";
+import { describeElapsed, loadJob, markAwaiting, updateJob } from "../jobs.mjs";
 import { listWorkspaces } from "../registry.mjs";
 import { bullet, heading, keyValue, untrustedBlock } from "../render.mjs";
 
@@ -126,6 +126,9 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
 
   let status = job.status;
   if (collected.pendingPermissions.length > 0) {
+    // Stamp the wait so the budget stops running. Idempotent, so repeated
+    // polling does not keep resetting it.
+    job = markAwaiting(job);
     status = "awaiting_permission";
   } else if (status === "running" || status === "queued" || status === "awaiting_permission") {
     // Text alone is not enough. An assistant message still streaming already
@@ -215,7 +218,8 @@ export function renderResult(job) {
       }
     }
     lines.push("");
-    lines.push(`Answer with: /external-agents:permit ${job.id} <request-id> allow|reject`);
+    lines.push(`Approve with:  /external-agents:permit allow`);
+    lines.push(`Or reject it:  /external-agents:permit reject`);
   }
 
   for (const warning of job.result?.warnings ?? []) {

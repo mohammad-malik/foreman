@@ -38,8 +38,10 @@ Human-invoked:
            [--background] [--timeout <seconds>] [--allow-dirty-tree]
            [--unattended] [--dir <path>]
                                 Dispatch a handoff to an external model
-  permit <job-id> <request-id> allow|reject
-                                Answer one pending permission request
+  permit [job-id] [request-id] allow|reject
+                                Answer a pending permission request. The ids are
+                                optional when only one is pending, so
+                                "permit allow" is usually enough.
   cancel [job-id]               Stop a running job
   revert <job-id>               Restore only the files a job changed
   register <path> [--allow-external] [--force]
@@ -164,7 +166,10 @@ const COMMANDS = {
 
   permit: async (argv) => {
     const { positionals } = parseArgs(argv, {});
-    process.stdout.write(`${await permit(positionals[0], positionals[1], positionals[2])}\n`);
+    // Variadic: the ids are optional, so `permit allow` works when only one
+    // request is pending. Copying two long ids to approve a test run is the
+    // kind of friction that leaves a job blocked overnight.
+    process.stdout.write(`${await permit(...positionals)}\n`);
     return 0;
   },
 
