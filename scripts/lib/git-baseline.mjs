@@ -139,12 +139,22 @@ export function captureBaseline(root) {
   const skippedContents = Object.create(null);
   const budget = { remaining: RESTORE_TOTAL_CAP };
 
-  // Whether each dirty path was staged before the job. Restoring the working
-  // tree without restoring this leaves the agent's blob in the index, so
-  // `git diff --cached` still shows its change and the next commit picks it up.
-  const staged = new Set(
-    status.filter((entry) => entry.code[0] !== " " && entry.code[0] !== "?").map((entry) => entry.path)
-  );
+  // The exact index entry for each staged path, not merely the fact that it
+  // was staged. A partially staged file (status MM) has different content in
+  // the index and the working tree, so reconstructing the index by re-adding
+  // the working tree would stage hunks the user had deliberately left out.
+  // `ls-files -s` gives the mode and blob needed to put it back exactly.
+  const indexEntries = Object.create(null);
+  for (const entry of status) {
+    if (entry.code[0] === " " || entry.code[0] === "?") {
+      continue;
+    }
+    const line = git(root, ["ls-files", "-s", "--", entry.path], { allowFailure: true }).trim();
+    const match = line.match(/^(\d{6}) ([0-9a-f]{40}) \d	/);
+    if (match) {
+      indexEntries[entry.path] = { mode: match[1], blob: match[2] };
+    }
+  }
 
   for (const entry of status) {
     const absolute = path.join(root, entry.path);
@@ -173,7 +183,7 @@ export function captureBaseline(root) {
     hashes,
     contents,
     skippedContents,
-    staged: [...staged]
+    indexEntries
   };
 }
 
@@ -212,7 +222,8 @@ function readForRestore(absolutePath, budget) {
 
     const content = fs.readFileSync(absolutePath).toString("base64");
     budget.remaining -= stat.size;
-    return { kind: "file", content };
+    // Mode is kept so a restored script does not come back non-executable.
+    return { kind: "file", content, mode: stat.mode };
   } catch (error) {
     return { kind: "skipped", reason: `it could not be read (${error.code ?? error.message})` };
   }
@@ -277,6 +288,74 @@ export function diffAgainstBaseline(baseline) {
 }
 
 /**
+ * Read a stored snapshot into something writable.
+ *
+ * Accepts both shapes deliberately. Job records persist across upgrades, and
+ * an older release stored a snapshot as a bare base64 string; refusing to
+ * understand that would strand every job written before the upgrade.
+ */
+function decodeSnapshot(stored) {
+  if (typeof stored === "string") {
+    return { kind: "file", buffer: Buffer.from(stored, "base64"), mode: null };
+  }
+
+  if (stored?.kind === "symlink" && typeof stored.target === "string") {
+    return { kind: "symlink", target: stored.target };
+  }
+
+  if (stored?.kind === "file" && typeof stored.content === "string") {
+    return {
+      kind: "file",
+      buffer: Buffer.from(stored.content, "base64"),
+      mode: typeof stored.mode === "number" ? stored.mode : null
+    };
+  }
+
+  throw new Error("unrecognised snapshot format");
+}
+
+/**
+ * Put a decoded snapshot back on disk.
+ *
+ * A symlink is unlinked and recreated, because writing to it would follow it
+ * and could clobber a file outside the repository. A regular file is written
+ * in place, which preserves its inode and its mode; the recorded mode is
+ * reapplied anyway so an executable bit survives even when the file had to be
+ * created fresh.
+ */
+function writeSnapshot(absolute, replacement) {
+  fs.mkdirSync(path.dirname(absolute), { recursive: true });
+
+  let current = null;
+  try {
+    current = fs.lstatSync(absolute);
+  } catch {
+    current = null;
+  }
+
+  if (replacement.kind === "symlink") {
+    if (current) {
+      fs.unlinkSync(absolute);
+    }
+    fs.symlinkSync(replacement.target, absolute);
+    return;
+  }
+
+  // Only a symlink needs removing first. Unlinking a regular file would drop
+  // its mode and force it to be recreated under the umask, which silently
+  // strips the executable bit off a script.
+  if (current?.isSymbolicLink()) {
+    fs.unlinkSync(absolute);
+  }
+
+  fs.writeFileSync(absolute, replacement.buffer);
+
+  if (replacement.mode !== null && process.platform !== "win32") {
+    fs.chmodSync(absolute, replacement.mode & 0o777);
+  }
+}
+
+/**
  * Put one path's index entry back the way it was before the job.
  *
  * Restoring file bytes is only half of it. If the agent staged its edit, the
@@ -284,15 +363,22 @@ export function diffAgainstBaseline(baseline) {
  * a change the user never made and the next commit quietly includes it.
  */
 function restoreIndexState(root, baseline, filePath) {
-  const wasStaged = (baseline.staged ?? []).includes(filePath);
+  const entry = baseline.indexEntries?.[filePath];
 
   // Drop whatever the agent staged.
   git(root, ["reset", "-q", "--", filePath], { allowFailure: true });
 
-  if (wasStaged) {
-    // It was staged before the job, so put the restored content back in.
-    git(root, ["add", "--", filePath], { allowFailure: true });
+  if (!entry) {
+    // It was not staged before the job, so an unstaged path is correct.
+    return;
   }
+
+  // Put back the exact blob that was staged, rather than re-adding the working
+  // tree. For a partially staged file those differ, and re-adding would stage
+  // hunks the user had deliberately kept out of the index.
+  git(root, ["update-index", "--add", "--cacheinfo", `${entry.mode},${entry.blob},${filePath}`], {
+    allowFailure: true
+  });
 }
 
 /** Compact per-file diffstat for the paths an agent actually touched. */
@@ -333,27 +419,30 @@ export function revertPaths(root, baseline, changed) {
         continue;
       }
 
-      // Remove first rather than writing over the path. Writing through a
-      // symlink follows it, which could overwrite a file outside the
-      // repository, and would leave a link where a link should be recreated.
+      // Decide everything BEFORE touching the disk. An earlier version of this
+      // deleted the path first and then decoded the snapshot, so a job record
+      // written by an older release, where a snapshot was a bare base64
+      // string rather than an object, threw on the decode after the user's
+      // file was already gone. Nothing is unlinked until the replacement bytes
+      // are in hand.
+      let replacement;
       try {
-        if (fs.lstatSync(absolute)) {
-          fs.unlinkSync(absolute);
-        }
-      } catch {
-        // Not there any more, which is fine.
+        replacement = decodeSnapshot(stored);
+      } catch (error) {
+        skipped.push({
+          path: entry.path,
+          reason: `its saved copy could not be read (${error.message}), so it was left untouched`
+        });
+        continue;
       }
 
-      fs.mkdirSync(path.dirname(absolute), { recursive: true });
-
-      if (stored.kind === "symlink") {
-        fs.symlinkSync(stored.target, absolute);
-      } else {
-        fs.writeFileSync(absolute, Buffer.from(stored.content, "base64"));
+      try {
+        writeSnapshot(absolute, replacement);
+        restoreIndexState(root, baseline, entry.path);
+        restored.push(entry.path);
+      } catch (error) {
+        skipped.push({ path: entry.path, reason: error.message });
       }
-
-      restoreIndexState(root, baseline, entry.path);
-      restored.push(entry.path);
       continue;
     }
 

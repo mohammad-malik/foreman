@@ -109,3 +109,105 @@ test("baseline content copies stay out of the record for a clean tree", () => {
 
   assert.deepEqual(Object.keys(baseline.contents), []);
 });
+
+test("a snapshot from an older release still restores, and never deletes", () => {
+  // Job records outlive upgrades. Release 0.2.0 stored a snapshot as a bare
+  // base64 string; 0.3.0 stores an object. Reading `.content` off the string
+  // yields undefined, and the earlier code unlinked the file BEFORE decoding,
+  // so an upgrade turned revert into deletion with no restore.
+  const { root } = makeRepo();
+  const scratch = path.join(root, "legacy.txt");
+  fs.writeFileSync(scratch, "original content\n");
+
+  const baseline = captureBaseline(root);
+  // Rewrite the snapshot in the old format.
+  baseline.contents["legacy.txt"] = Buffer.from("original content\n").toString("base64");
+
+  fs.writeFileSync(scratch, "agent overwrote this\n");
+
+  const diff = diffAgainstBaseline(baseline);
+  const outcome = revertPaths(root, baseline, diff.changed);
+
+  assert.equal(fs.existsSync(scratch), true, "the file must survive a legacy snapshot");
+  assert.equal(fs.readFileSync(scratch, "utf8"), "original content\n");
+  assert.deepEqual(outcome.removed, []);
+});
+
+test("an unreadable snapshot leaves the file alone rather than destroying it", () => {
+  const { root } = makeRepo();
+  const scratch = path.join(root, "corrupt.txt");
+  fs.writeFileSync(scratch, "mine\n");
+
+  const baseline = captureBaseline(root);
+  baseline.contents["corrupt.txt"] = { kind: "nonsense" };
+
+  fs.writeFileSync(scratch, "agent edit\n");
+
+  const diff = diffAgainstBaseline(baseline);
+  const outcome = revertPaths(root, baseline, diff.changed);
+
+  assert.equal(fs.existsSync(scratch), true, "never delete on the strength of a snapshot we cannot read");
+  assert.equal(outcome.skipped.length, 1);
+  assert.match(outcome.skipped[0].reason, /could not be read/);
+});
+
+test("a partially staged file keeps its unstaged hunks out of the index", () => {
+  // Status MM: the index and working tree differ because the user staged some
+  // hunks and not others. Reconstructing the index by re-adding the working
+  // tree would stage the parts they deliberately left out.
+  const { root, git } = makeRepo();
+  const file = path.join(root, "tracked.txt");
+
+  fs.writeFileSync(file, "committed\nstaged line\n");
+  git("add", "--", "tracked.txt");
+  const stagedBlob = git("ls-files", "-s", "--", "tracked.txt").trim().split(/\s+/)[1];
+
+  fs.writeFileSync(file, "committed\nstaged line\nunstaged line\n");
+
+  const baseline = captureBaseline(root);
+  assert.equal(baseline.indexEntries["tracked.txt"].blob, stagedBlob);
+
+  fs.writeFileSync(file, "committed\nstaged line\nunstaged line\nagent line\n");
+
+  const diff = diffAgainstBaseline(baseline);
+  revertPaths(root, baseline, diff.changed);
+
+  const afterBlob = git("ls-files", "-s", "--", "tracked.txt").trim().split(/\s+/)[1];
+  assert.equal(afterBlob, stagedBlob, "the index must hold exactly what was staged before the job");
+  assert.equal(
+    fs.readFileSync(file, "utf8"),
+    "committed\nstaged line\nunstaged line\n",
+    "the working tree returns to its pre-job state"
+  );
+});
+
+test("an unstaged file is not left staged by revert", () => {
+  const { root, git } = makeRepo();
+  const scratch = path.join(root, "loose.txt");
+  fs.writeFileSync(scratch, "mine\n");
+
+  const baseline = captureBaseline(root);
+  fs.writeFileSync(scratch, "agent edit\n");
+  git("add", "--", "loose.txt");
+
+  const diff = diffAgainstBaseline(baseline);
+  revertPaths(root, baseline, diff.changed);
+
+  assert.equal(git("ls-files", "-s", "--", "loose.txt").trim(), "", "must not be staged");
+  assert.equal(fs.readFileSync(scratch, "utf8"), "mine\n");
+});
+
+test("the executable bit survives a revert", { skip: process.platform === "win32" }, () => {
+  const { root } = makeRepo();
+  const script = path.join(root, "run.sh");
+  fs.writeFileSync(script, "#!/bin/sh\necho hi\n");
+  fs.chmodSync(script, 0o755);
+
+  const baseline = captureBaseline(root);
+  fs.writeFileSync(script, "#!/bin/sh\necho tampered\n");
+
+  const diff = diffAgainstBaseline(baseline);
+  revertPaths(root, baseline, diff.changed);
+
+  assert.equal(fs.statSync(script).mode & 0o111, 0o111, "a restored script must still be executable");
+});
