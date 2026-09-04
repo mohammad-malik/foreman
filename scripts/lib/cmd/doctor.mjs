@@ -101,7 +101,9 @@ export function doctor() {
   lines.push(heading("Routes"));
 
   const models = inventory?.models ?? null;
-  for (const alias of listAliases()) {
+  // With the inventory, a reserved alias whose id has landed reports as a live
+  // route instead of as a pending one.
+  for (const alias of listAliases(models)) {
     if (alias.reserved && alias.routes.length === 0) {
       record("info", alias.alias, `reserved, no live provider ID yet (${alias.description})`);
       continue;
@@ -111,7 +113,7 @@ export function doctor() {
       const name = `${alias.alias}.${route.route}`;
       try {
         resolveRoute(alias.alias, route.route, models);
-        record("ok", name, route.qualified);
+        record("ok", name, `${route.qualified}${alias.promoted ? "  (newly live)" : ""}`);
       } catch (error) {
         const detail = models
           ? `${error.message}${error.candidates?.length ? `\n${bullet(`closest live IDs: ${error.candidates.join(", ")}`, 8)}` : ""}`

@@ -19,7 +19,8 @@ const LIVE = [
   "opencode/glm-5.2",
   "fireworks-ai/accounts/fireworks/routers/kimi-k3-fast",
   "fireworks-ai/accounts/fireworks/routers/glm-5p2-fast",
-  "fireworks-ai/accounts/fireworks/models/glm-5p3-flash"
+  "fireworks-ai/accounts/fireworks/models/glm-5p3-flash",
+  "opencode/gpt-5.6-sol"
 ];
 
 test("resolves a known alias and route to a split provider/model pair", () => {
@@ -49,9 +50,9 @@ test("an unknown alias fails and lists what does exist", () => {
 });
 
 test("a missing route on a known alias names the routes that exist", () => {
-  // glm-flash is fast-only on purpose. Asking for standard must fail loudly
-  // rather than quietly serving the fast route.
-  assert.throws(() => resolveRoute("glm-flash", "standard", LIVE), /Available: fast/);
+  // sol is standard-only on purpose. Asking for a fast route must fail loudly
+  // rather than quietly serving a different model.
+  assert.throws(() => resolveRoute("sol", "fast", LIVE), /Available: standard/);
 });
 
 test("a reserved alias with no live ID fails with an explanation", () => {
@@ -129,14 +130,32 @@ test("listAliases reports astra as reserved with no routes", () => {
   assert.deepEqual(astra.routes, []);
 });
 
-test("a live gpt-6 id is surfaced against the reserved astra alias", () => {
-  // The point of reserving the alias: the day GPT-6 appears upstream, doctor
-  // says so instead of leaving it to be noticed by accident.
-  const found = findReservedCandidates([...LIVE, "opencode/gpt-6-astra"]);
+test("a live gpt-6-astra id promotes the reserved alias to dispatchable", () => {
+  // The point of reserving the alias: the day GPT-6 appears upstream it works,
+  // with no edit to the route table.
+  const inventory = [...LIVE, "opencode/gpt-6-astra"];
+  const resolved = resolveRoute("astra", "standard", inventory);
+
+  assert.equal(resolved.qualified, "opencode/gpt-6-astra");
+
+  const astra = listAliases(inventory).find((entry) => entry.alias === "astra");
+  assert.equal(astra.reserved, false);
+  assert.equal(astra.promoted, true);
+
+  // Promoted, so it is reported as available rather than as something to watch.
+  assert.deepEqual(findReservedCandidates(inventory), []);
+});
+
+test("a gpt-6 id that is not a known candidate is surfaced, not guessed at", () => {
+  // Matches astra watch patterns but is not one of its pending ids, so it is
+  // reported for a human to wire up and nothing is dispatched to it.
+  const inventory = [...LIVE, "opencode/gpt-6-nova"];
+  const found = findReservedCandidates(inventory);
 
   assert.equal(found.length, 1);
   assert.equal(found[0].alias, "astra");
-  assert.deepEqual(found[0].matches, ["opencode/gpt-6-astra"]);
+  assert.deepEqual(found[0].matches, ["opencode/gpt-6-nova"]);
+  assert.throws(() => resolveRoute("astra", "standard", inventory), /reserved/);
 });
 
 test("no reserved candidates are reported when nothing matches", () => {

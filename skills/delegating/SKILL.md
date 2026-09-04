@@ -35,6 +35,11 @@ getting none.
 If `substitutedRoute` is true, the model had only one route and it was not the
 one implied. Say so in your report.
 
+`code: "spoken_retired"` means the name used to work and deliberately no longer
+does. Show the message and stop. Do not reach for the model next to it: the
+whole reason that name refuses is that resolving it to a neighbour would run
+something the user did not ask for.
+
 ## One handoff per task
 
 The external agent cannot see this conversation. It gets one message. For each

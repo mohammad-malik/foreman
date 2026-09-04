@@ -7,7 +7,7 @@
  */
 
 import { detectVersion, loadInventory } from "../opencode.mjs";
-import { findReservedCandidates, listAliases, resolveRoute } from "../routes.mjs";
+import { findReservedCandidates, listAliases, loadRetired, resolveRoute } from "../routes.mjs";
 import { bullet, heading } from "../render.mjs";
 
 export function routes({ refresh = false } = {}) {
@@ -27,9 +27,13 @@ export function routes({ refresh = false } = {}) {
 
   const lines = [heading("Model routes")];
 
-  for (const alias of listAliases()) {
+  // The inventory goes in, so a reserved alias whose id has appeared upstream
+  // is listed as usable here rather than as something still being waited on.
+  for (const alias of listAliases(models)) {
     lines.push("");
-    lines.push(`${alias.alias}${alias.description ? ` - ${alias.description}` : ""}`);
+    lines.push(
+      `${alias.alias}${alias.description ? ` - ${alias.description}` : ""}${alias.promoted ? "  (just went live)" : ""}`
+    );
 
     if (alias.routes.length === 0) {
       lines.push(bullet(alias.reserved ? "reserved, no live route yet" : "no routes configured"));
@@ -56,6 +60,21 @@ export function routes({ refresh = false } = {}) {
       lines.push(
         `${entry.alias}: matching IDs are now live upstream (${entry.matches.join(", ")}). Add a route to start using them.`
       );
+    }
+  }
+
+  // Grouped by reason: six spellings of the same retirement is one fact, and
+  // printing it six times buries the rest of the output.
+  const retired = new Map();
+  for (const [name, reason] of Object.entries(loadRetired())) {
+    retired.set(reason, [...(retired.get(reason) ?? []), name]);
+  }
+
+  if (retired.size > 0) {
+    lines.push("");
+    lines.push("Retired names (these refuse rather than resolve to something near them):");
+    for (const [reason, names] of retired) {
+      lines.push(bullet(`${names.map((name) => `"${name}"`).join(", ")} - ${reason}`));
     }
   }
 

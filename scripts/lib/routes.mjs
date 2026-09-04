@@ -28,7 +28,7 @@ export class RouteUnavailableError extends Error {
   }
 }
 
-export function loadRouteTable() {
+export function loadRouteTable(inventory = null) {
   const defaults = JSON.parse(fs.readFileSync(DEFAULTS_FILE, "utf8"));
   const overrides = loadConfig().routes ?? {};
   const aliases = { ...defaults.aliases };
@@ -44,15 +44,70 @@ export function loadRouteTable() {
     };
   }
 
-  return { version: defaults.version, aliases };
+  for (const [alias, entry] of Object.entries(aliases)) {
+    aliases[alias] = promotePending(entry, inventory);
+  }
+
+  return {
+    version: defaults.version,
+    aliases,
+    retired: { ...(defaults.retired ?? {}), ...(overrides.retired ?? {}) }
+  };
 }
 
-export function listAliases() {
-  const table = loadRouteTable();
+/**
+ * Turn a reserved alias's candidate ids into real routes, but only for ids the
+ * live inventory actually lists.
+ *
+ * This is what stops a reserved model being a waiting game. `astra` carries the
+ * ids GPT-6 is expected to ship under; the day one of them appears upstream the
+ * alias becomes dispatchable with no edit to the config, and until then it still
+ * refuses rather than guessing at a name. An explicit route always wins, so a
+ * user override is never overwritten by a guess.
+ */
+function promotePending(entry, inventory) {
+  const pending = entry.pendingRoutes;
+  if (!pending || !inventory) {
+    return entry;
+  }
+
+  const routes = { ...(entry.routes ?? {}) };
+  let promoted = false;
+
+  for (const [route, candidates] of Object.entries(pending)) {
+    if (routes[route]) {
+      continue;
+    }
+    const live = (candidates ?? []).find((target) => inventory.includes(qualify(target)));
+    if (live) {
+      routes[route] = live;
+      promoted = true;
+    }
+  }
+
+  if (!promoted) {
+    return entry;
+  }
+
+  // No longer reserved: it has a live id, so it should read as available
+  // everywhere, including in doctor and routes.
+  return { ...entry, routes, reserved: false, promoted: true };
+}
+
+/** Spoken names that must refuse rather than resolve. See config comments. */
+export function loadRetired() {
+  return loadRouteTable().retired ?? {};
+}
+
+export function listAliases(inventory = null) {
+  const table = loadRouteTable(inventory);
   return Object.entries(table.aliases).map(([alias, entry]) => ({
     alias,
     description: entry.description ?? "",
     reserved: Boolean(entry.reserved),
+    // True when a reserved alias just became dispatchable because its id
+    // appeared upstream. Worth saying out loud: it changes what you can run.
+    promoted: Boolean(entry.promoted),
     // Spoken forms travel with the alias so resolve-spoken needs no second
     // read of the config, and so a merged user override is included.
     spoken: entry.spoken ?? [],
@@ -78,7 +133,9 @@ export function qualify(target) {
  * only the local table is consulted.
  */
 export function resolveRoute(alias, route, inventory = null) {
-  const table = loadRouteTable();
+  // The inventory goes in, so a reserved alias whose id has appeared upstream
+  // resolves here instead of refusing.
+  const table = loadRouteTable(inventory);
   const entry = table.aliases[alias];
 
   if (!entry) {
@@ -156,7 +213,10 @@ export function nearestMatches(wanted, inventory, limit = 5) {
  * moment a matching ID appears upstream.
  */
 export function findReservedCandidates(inventory) {
-  const table = loadRouteTable();
+  // Promotion happens inside loadRouteTable, so an alias that went live is no
+  // longer reserved and drops out of this list: it is reported as available
+  // rather than as a candidate to watch.
+  const table = loadRouteTable(inventory);
   const found = [];
 
   for (const [alias, entry] of Object.entries(table.aliases)) {

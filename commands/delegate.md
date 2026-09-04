@@ -1,6 +1,6 @@
 ---
 description: Hand a task to an external model (Kimi, GLM) through OpenCode, then verify the result against git
-argument-hint: '[--model kimi|glm|glm-flash] [--route standard|fast] [--role builder|researcher] [--write] [--background] what the external agent should do'
+argument-hint: '[--model kimi|glm|sol] [--route standard|fast] [--role builder|researcher] [--write] [--background] what the external agent should do'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
 ---

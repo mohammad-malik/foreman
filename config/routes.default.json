@@ -1,7 +1,18 @@
 {
-  "version": 2,
+  "version": 3,
 
-  "//": "Spoken names are DATA, not logic. Nothing in the runtime or the skills knows that 'kimi' or 'glm 5.3' means anything: `resolve` matches a phrase against these lists. Adding a model, or a new way of saying an existing one, is an edit to this file and nothing else. Speed words (fast, quick, cheap, standard, full) are handled by resolve and are not listed here, so 'fast kimi' needs no entry of its own.",
+  "//": "Spoken names are DATA, not logic. Nothing in the runtime or the skills knows that 'kimi' or 'glm' means anything: `resolve` matches a phrase against these lists. Adding a model, or a new way of saying an existing one, is an edit to this file and nothing else. Speed words (fast, quick, cheap, standard, full) are handled by resolve and are not listed here, so 'fast kimi' needs no entry of its own.",
+
+  "//retired": "Names that used to work and must now refuse rather than resolve. A retired name is not the same as an unknown one: 'glm 5.2' would otherwise match the `glm` alias by containment and quietly dispatch to GLM 5.3 Flash, which is exactly the silent substitution this plugin exists to prevent. The value is the sentence the user sees.",
+
+  "retired": {
+    "glm 5.2": "GLM now means GLM 5.3 Flash. 5.2 is no longer routed. Say \"glm\" for 5.3 Flash.",
+    "glm-5.2": "GLM now means GLM 5.3 Flash. 5.2 is no longer routed. Say \"glm\" for 5.3 Flash.",
+    "glm5.2": "GLM now means GLM 5.3 Flash. 5.2 is no longer routed. Say \"glm\" for 5.3 Flash.",
+    "glm 5p2": "GLM now means GLM 5.3 Flash. 5.2 is no longer routed. Say \"glm\" for 5.3 Flash.",
+    "glm 5.1": "Only GLM 5.3 Flash is routed. Say \"glm\".",
+    "glm 5": "Only GLM 5.3 Flash is routed. Say \"glm\"."
+  },
 
   "aliases": {
     "kimi": {
@@ -17,30 +28,26 @@
     },
 
     "glm": {
-      "description": "Zhipu GLM 5.2. Cheaper primary worker.",
-      "spoken": ["glm", "glm 5.2", "glm-5.2", "glm5.2", "zhipu"],
-      "routes": {
-        "standard": { "providerID": "opencode", "modelID": "glm-5.2" },
-        "fast": {
-          "providerID": "fireworks-ai",
-          "modelID": "accounts/fireworks/routers/glm-5p2-fast"
-        }
-      }
-    },
-
-    "glm-flash": {
-      "description": "GLM 5.3 Flash. Cheapest option, good for narrow mechanical work.",
+      "description": "GLM 5.3 Flash. The only routed GLM: cheap, quick, good for narrow mechanical work.",
+      "//": "Both tiers point at the same model on purpose. GLM has exactly one routed model, so 'glm' and 'fast glm' are the same request and there is no substitution worth reporting. 5.2 and plain 5.3 are retired above, not merely absent.",
       "spoken": [
+        "glm",
         "glm flash",
         "glm-flash",
         "glm 5.3",
         "glm-5.3",
         "glm5.3",
         "glm 5.3 flash",
+        "glm 5p3",
         "glm 5p3 flash",
-        "flash"
+        "flash",
+        "zhipu"
       ],
       "routes": {
+        "standard": {
+          "providerID": "fireworks-ai",
+          "modelID": "accounts/fireworks/models/glm-5p3-flash"
+        },
         "fast": {
           "providerID": "fireworks-ai",
           "modelID": "accounts/fireworks/models/glm-5p3-flash"
@@ -48,12 +55,43 @@
       }
     },
 
+    "sol": {
+      "description": "GPT-5.6 Sol. Live now via the opencode provider.",
+      "spoken": [
+        "sol",
+        "gpt 5.6 sol",
+        "gpt-5.6-sol",
+        "gpt5.6 sol",
+        "gpt 5.6",
+        "gpt-5.6",
+        "gpt5.6"
+      ],
+      "routes": {
+        "standard": { "providerID": "opencode", "modelID": "gpt-5.6-sol" }
+      }
+    },
+
     "astra": {
-      "description": "GPT-6, shipping as gpt-6-astra. Reserved: no live provider ID yet.",
-      "spoken": ["astra", "gpt-6-astra", "gpt6 astra", "gpt-6", "gpt6", "gpt 6"],
+      "description": "GPT-6, shipping as gpt-6-astra. Reserved: activates by itself the moment a matching model id appears upstream.",
+      "spoken": ["astra", "gpt-6-astra", "gpt6 astra", "gpt 6 astra", "gpt-6", "gpt6", "gpt 6"],
       "reserved": true,
       "watchPatterns": ["gpt-6", "astra"],
-      "routes": {}
+      "routes": {},
+
+      "//pendingRoutes": "Candidate ids, tried in order, promoted to real routes only when the live inventory actually lists one. So the day GPT-6 lands, 'have astra do X' works with no edit to this file, and until then astra still refuses rather than guessing.",
+
+      "pendingRoutes": {
+        "standard": [
+          { "providerID": "opencode", "modelID": "gpt-6-astra" },
+          { "providerID": "opencode", "modelID": "gpt-6" }
+        ],
+        "fast": [
+          {
+            "providerID": "fireworks-ai",
+            "modelID": "accounts/fireworks/routers/gpt-6-astra-fast"
+          }
+        ]
+      }
     }
   }
 }

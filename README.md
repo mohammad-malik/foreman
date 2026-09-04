@@ -33,14 +33,29 @@ Long jobs take `--background` and are reported when they land.
 
 ## Models
 
-| Alias | Routes |
-|---|---|
-| `kimi` | standard (Zen), fast (Fireworks router) |
-| `glm` | standard (Zen), fast (Fireworks router) |
-| `glm-flash` | fast |
-| `astra` | reserved for GPT-6 (`gpt-6-astra`), no live ID yet |
+| Alias | Say | Routes |
+|---|---|---|
+| `kimi` | kimi, kimi k3, k3, moonshot | standard (Zen), fast (Fireworks router) |
+| `glm` | glm, glm 5.3, glm flash, flash, zhipu | GLM 5.3 Flash on both tiers |
+| `sol` | sol, gpt 5.6 sol, gpt 5.6 | standard (Zen) |
+| `astra` | astra, gpt-6-astra, gpt 6 | reserved for GPT-6, activates on its own |
 
-A model is never substituted. If a route is unavailable you get an error naming the live alternatives, not a quiet downgrade to something else.
+Spoken names live in `config/routes.default.json`. Adding a model, or another
+way of saying one, is an edit to that file: no code knows what "kimi" means.
+Speed words are handled separately, so `fast kimi` and `cheapest glm` need no
+entries.
+
+A model is never substituted. If a route is unavailable you get an error naming
+the live alternatives, not a quiet downgrade to something else. Two cases go
+further than an error:
+
+- **Retired names.** GLM means GLM 5.3 Flash and nothing else. Say `glm 5.2`
+  and it refuses, because that phrase contains `glm` and would otherwise match
+  the alias and run 5.3 Flash for someone who asked for 5.2.
+- **Reserved names that promote themselves.** `astra` carries the ids GPT-6 is
+  expected to ship under. The day one appears in the live inventory the alias
+  becomes dispatchable with no edit here, and until then it refuses rather than
+  guessing at a name.
 
 ## No nested agents, for now
 

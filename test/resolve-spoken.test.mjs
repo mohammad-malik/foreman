@@ -39,28 +39,62 @@ test("standard words select the standard route", () => {
   }
 });
 
-test("the most specific name wins, so a version is not lost", () => {
-  // "glm 5.3" must not resolve to plain "glm": they are different models, and
-  // silently using the wrong one is the failure this ordering prevents.
-  assert.equal(resolveSpoken("glm").alias, "glm");
-  assert.equal(resolveSpoken("glm 5.3").alias, "glm-flash");
-  assert.equal(resolveSpoken("GLM 5.3 Flash").alias, "glm-flash");
-  assert.equal(resolveSpoken("glm-5.2").alias, "glm");
+test("every way of saying GLM lands on the one routed GLM", () => {
+  // GLM means GLM 5.3 Flash and nothing else, so all of these must agree.
+  for (const phrase of ["glm", "glm 5.3", "GLM 5.3 Flash", "glm flash", "zhipu"]) {
+    const match = resolveSpoken(phrase);
+    assert.equal(match.alias, "glm", phrase);
+    assert.equal(match.modelID, "accounts/fireworks/models/glm-5p3-flash", phrase);
+  }
+});
+
+test("a retired name refuses instead of falling through to its neighbour", () => {
+  // The dangerous outcome is not an error, it is "glm 5.2" matching the `glm`
+  // alias by containment and quietly running GLM 5.3 Flash.
+  for (const phrase of ["glm 5.2", "glm-5.2", "glm5.2"]) {
+    assert.throws(
+      () => resolveSpoken(phrase),
+      (error) => {
+        assert.equal(error.code, "spoken_retired", phrase);
+        assert.match(error.message, /no longer routed/);
+        return true;
+      },
+      phrase
+    );
+  }
 });
 
 test("flash is treated as a model word, not a speed word", () => {
   // It appears in a spoken list, so it must not be stripped as speed.
-  assert.equal(resolveSpoken("flash").alias, "glm-flash");
+  assert.equal(resolveSpoken("flash").alias, "glm");
+});
+
+test("gpt 5.6 sol resolves to sol, and not to astra", () => {
+  for (const phrase of ["sol", "gpt 5.6 sol", "gpt-5.6-sol", "gpt5.6 sol"]) {
+    const match = resolveSpoken(phrase);
+    assert.equal(match.alias, "sol", phrase);
+    assert.equal(match.qualified, "opencode/gpt-5.6-sol", phrase);
+  }
 });
 
 test("a model with one route gets it, and says the route was substituted", () => {
-  // glm-flash is fast-only. Asking for standard yields fast rather than an
+  // sol is standard-only. Asking for fast yields standard rather than an
   // error, but the substitution is reported rather than hidden.
-  const match = resolveSpoken("standard glm 5.3");
-  assert.equal(match.alias, "glm-flash");
-  assert.equal(match.route, "fast");
+  const match = resolveSpoken("fast sol");
+  assert.equal(match.alias, "sol");
+  assert.equal(match.route, "standard");
   assert.equal(match.substitutedRoute, true);
-  assert.equal(match.requestedRoute, "standard");
+  assert.equal(match.requestedRoute, "fast");
+});
+
+test("astra resolves by itself once its id appears upstream", () => {
+  // "gpt 6 astra will be live soon" should not mean editing a config file on
+  // the day it lands.
+  assert.throws(() => resolveSpoken("gpt-6-astra", ["opencode/kimi-k3"]), /reserved/);
+
+  const match = resolveSpoken("gpt-6-astra", ["opencode/kimi-k3", "opencode/gpt-6-astra"]);
+  assert.equal(match.alias, "astra");
+  assert.equal(match.qualified, "opencode/gpt-6-astra");
 });
 
 test("synonyms resolve", () => {
