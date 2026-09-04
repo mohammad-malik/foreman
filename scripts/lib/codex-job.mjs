@@ -23,7 +23,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { codexBinary, execArgs, parseEventLog, sandboxFor } from "./codex.mjs";
-import { isAlive, terminateProcessTree } from "./process.mjs";
+import { isAlive, processCommandLine, terminateProcessTree } from "./process.mjs";
 import { workspaceStateDir } from "./state.mjs";
 
 /** Per-job scratch directory, outside the repository. */
@@ -58,23 +58,32 @@ export function startCodexJob({ slug, jobID, model, root, task, write }) {
 
   const args = execArgs({ model, root, write, messageFile: files.messageFile });
 
-  // Opened before the spawn so a failure to open is reported here rather than
-  // silently losing the log of a job that is already running.
-  const stdin = fs.openSync(files.taskFile, "r");
-  const stdout = fs.openSync(files.logFile, "a");
-  const stderr = fs.openSync(files.errFile, "a");
-
+  // Descriptors are opened before the spawn so a failure to open is reported
+  // here rather than silently losing the log of a job that is already running.
+  // Each one is tracked as it opens: if the second or third throws, the ones
+  // already open have to be closed, and a leak inside a long-lived process is
+  // not the kind of thing that announces itself.
+  const opened = [];
   let child;
+
   try {
+    for (const [file, mode] of [
+      [files.taskFile, "r"],
+      [files.logFile, "a"],
+      [files.errFile, "a"]
+    ]) {
+      opened.push(fs.openSync(file, mode));
+    }
+
     child = spawn(codexBinary(), args, {
       cwd: root,
       detached: true,
       windowsHide: true,
-      stdio: [stdin, stdout, stderr]
+      stdio: opened
     });
   } finally {
-    // The child holds its own duplicates of these descriptors.
-    for (const fd of [stdin, stdout, stderr]) {
+    // The child holds its own duplicates of these.
+    for (const fd of opened) {
       try {
         fs.closeSync(fd);
       } catch {
@@ -82,6 +91,20 @@ export function startCodexJob({ slug, jobID, model, root, task, write }) {
       }
     }
   }
+
+  // A spawn failure that is not synchronous arrives as an event, and an
+  // unhandled "error" event takes the whole process down. That would kill the
+  // dispatching session AFTER the job record was written as running, leaving a
+  // job that never existed looking like one that is in flight. Recorded to the
+  // job's own stderr file instead, which is where judgeCodexJob reads the
+  // reason from.
+  child.on("error", (error) => {
+    try {
+      fs.appendFileSync(files.errFile, `failed to start codex: ${error.message}\n`, "utf8");
+    } catch {
+      // The state directory is gone; there is nowhere left to say so.
+    }
+  });
 
   child.unref();
 
@@ -91,6 +114,27 @@ export function startCodexJob({ slug, jobID, model, root, task, write }) {
     command: `${codexBinary()} ${args.join(" ")}`,
     ...files
   };
+}
+
+/**
+ * Whether the recorded PID is still OUR codex process.
+ *
+ * A PID is a weak reference. On a long-lived machine the number gets recycled,
+ * and a job whose process died can be looking at something unrelated that
+ * happens to hold the same number, reporting "running" forever.
+ *
+ * The check is exact and free of guesswork: every job passes
+ * `--output-last-message <state dir>/codex/<job id>/last-message.txt`, so its
+ * own id is in its command line and nothing else's is. Reading a command line
+ * costs a subprocess, so this is called where a wrong answer matters, not in a
+ * polling loop.
+ */
+export function processMatchesJob(job, readCommandLine = processCommandLine) {
+  const line = readCommandLine(job.pid);
+  if (line === null) {
+    return false;
+  }
+  return line.includes(job.id);
 }
 
 /**
@@ -180,12 +224,17 @@ export function isStalled(job, state, now = Date.now()) {
  * event log's own error events or from stderr rather than invented here.
  */
 export function judgeCodexJob(job, state) {
-  if (state.alive) {
-    return { status: "running", error: null };
-  }
-
+  // Checked BEFORE liveness. A finished turn with a final message is a finished
+  // job whatever the process table says, and asking the log first is what stops
+  // a recycled PID holding a completed job at "running" until its budget runs
+  // out. Nothing is written after turn.completed: the edits land as patch
+  // events before it, and the message file is the last thing codex does.
   if (state.parsed.turnDone && state.finalText && state.parsed.errors.length === 0) {
     return { status: "completed", error: null };
+  }
+
+  if (state.alive) {
+    return { status: "running", error: null };
   }
 
   const reason =

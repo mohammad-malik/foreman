@@ -121,15 +121,17 @@ function normaliseAlias(entry, live) {
     (backend) => Object.keys(backends[backend]).length > 0
   );
 
-  const preferred = entry.defaultBackend ?? DEFAULT_BACKEND;
-
   return {
     ...entry,
     byBackend: backends,
-    // The preferred backend stays preferred even when it has no live route, so
-    // an error says "sol has no codex route" rather than quietly running the
-    // job somewhere else.
-    defaultBackend: usable.includes(preferred) ? preferred : (usable[0] ?? preferred),
+    // The configured default is the default, full stop, even when it has no
+    // live route. Falling back to whichever backend does have one looks helpful
+    // and is the exact substitution this file exists to prevent: astra
+    // promoting on OpenCode alone would have quietly billed an API key for a
+    // job the config says runs on a ChatGPT sign-in. An error naming the
+    // backend that IS available is the honest answer, and `resolveRoute`
+    // produces one.
+    defaultBackend: entry.defaultBackend ?? DEFAULT_BACKEND,
     reserved: Boolean(entry.reserved) && usable.length === 0,
     promoted: promoted.promoted
   };

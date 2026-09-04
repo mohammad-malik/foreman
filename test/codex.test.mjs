@@ -123,12 +123,45 @@ test("nothing a codex job writes lands inside the workspace", () => {
   }
 });
 
-test("a live process is running, whatever the log says", () => {
-  // turn.completed means the model finished its turn, not that the process has
-  // exited. Settling on the log would freeze the change set while codex is
-  // still flushing its edits.
-  const judged = judgeCodexJob({ pid: 1 }, { alive: true, parsed: parseEventLog(LOG), finalText: "x", stderr: "" });
+test("a live process with an unfinished turn is running", () => {
+  const judged = judgeCodexJob(
+    { pid: 1 },
+    {
+      alive: true,
+      parsed: parseEventLog(LOG.split("\n").slice(0, 5).join("\n")),
+      finalText: null,
+      stderr: ""
+    }
+  );
+
   assert.equal(judged.status, "running");
+});
+
+test("a finished turn settles the job even if the pid still looks alive", () => {
+  // A PID is a weak reference: on a long-lived machine the number is recycled,
+  // and a completed job whose number landed on something else would otherwise
+  // read as running until its budget expired. The log is the better witness,
+  // because nothing is written after turn.completed.
+  const judged = judgeCodexJob(
+    { pid: 1 },
+    { alive: true, parsed: parseEventLog(LOG), finalText: "Appended probe.", stderr: "" }
+  );
+
+  assert.equal(judged.status, "completed");
+});
+
+test("a recycled pid is not mistaken for this job's process", async () => {
+  const { processMatchesJob } = await import("../scripts/lib/codex-job.mjs");
+  const job = { id: "job_abc", pid: 4242 };
+
+  // Every job passes --output-last-message through a directory named after
+  // itself, so its own id is in its command line and nothing else's is.
+  assert.equal(
+    processMatchesJob(job, () => "codex exec - --output-last-message C:\\state\\codex\\job_abc\\last.txt"),
+    true
+  );
+  assert.equal(processMatchesJob(job, () => "node something-else.js"), false);
+  assert.equal(processMatchesJob(job, () => null), false);
 });
 
 test("a finished process with a completed turn and text is a success", () => {

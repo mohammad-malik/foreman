@@ -16,7 +16,13 @@
  * possibly still be running, never merely because it is slow.
  */
 
-import { isStalled, judgeCodexJob, readCodexJob, SILENT_GRACE_MS } from "./codex-job.mjs";
+import {
+  isStalled,
+  judgeCodexJob,
+  processMatchesJob,
+  readCodexJob,
+  SILENT_GRACE_MS
+} from "./codex-job.mjs";
 import { ACTIVE_STATUSES, elapsedMs, listJobs, updateJob } from "./jobs.mjs";
 import { currentServer } from "./servers.mjs";
 
@@ -54,9 +60,20 @@ export function reconcileWorkspace(workspace) {
     // not, and once it is gone the event log is the whole story, so this is
     // where a background Codex job reaches a terminal state.
     if (job.backend === "codex") {
-      const state = readCodexJob(job);
+      let state = readCodexJob(job);
 
-      if (isStalled(job, state)) {
+      // A live-looking PID that is not this job's codex is a recycled number,
+      // so the job is judged as the finished thing it is. Only asked here,
+      // where reconciliation already runs at human pace, and only once the
+      // process has been quiet long enough that being wrong would matter:
+      // reading a command line costs a subprocess.
+      if (state.alive && !state.parsed.turnDone && elapsed > SILENT_GRACE_MS) {
+        if (!processMatchesJob(job)) {
+          state = { ...state, alive: false };
+        }
+      }
+
+      if (state.alive && isStalled(job, state)) {
         changed.push(
           updateJob(job, {
             status: "failed",

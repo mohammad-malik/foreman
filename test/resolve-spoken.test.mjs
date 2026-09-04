@@ -141,17 +141,33 @@ test("astra resolves by itself once its id appears upstream", () => {
   // the day it lands.
   assert.throws(() => resolveSpoken("gpt-6-astra", ["opencode/kimi-k3"]), /reserved/);
 
-  // Promoted on whichever backend actually offers it. Codex is astra's
-  // default, so a codex id promotes to the default path.
+  // Promoted on the backend that offers it. Codex is astra's default, so a
+  // codex id promotes straight onto the default path.
   const viaCodex = resolveSpoken("gpt-6-astra", { codex: ["gpt-6-astra"] });
   assert.equal(viaCodex.alias, "astra");
   assert.equal(viaCodex.backend, "codex");
   assert.equal(viaCodex.qualified, "codex/gpt-6-astra");
+});
 
-  const match = resolveSpoken("gpt-6-astra", { opencode: ["opencode/gpt-6-astra"] });
-  assert.equal(match.alias, "astra");
-  assert.equal(match.backend, "opencode");
-  assert.equal(match.qualified, "opencode/gpt-6-astra");
+test("promotion on one backend never moves a model's default to it", () => {
+  // GPT-6 appearing on OpenCode alone does not make astra an OpenCode model.
+  // Quietly moving the default there would bill an API key for a job the config
+  // says runs on a ChatGPT sign-in, which is the substitution this all exists
+  // to prevent.
+  const openCodeOnly = { opencode: ["opencode/gpt-6-astra"] };
+
+  assert.throws(
+    () => resolveSpoken("gpt-6-astra", openCodeOnly),
+    (error) => {
+      assert.match(error.message, /does not run on codex|cannot run on the codex/);
+      return true;
+    }
+  );
+
+  // Saying the backend out loud is how you get it.
+  const asked = resolveSpoken("opencode gpt-6-astra", openCodeOnly);
+  assert.equal(asked.backend, "opencode");
+  assert.equal(asked.qualified, "opencode/gpt-6-astra");
 });
 
 test("synonyms resolve", () => {
