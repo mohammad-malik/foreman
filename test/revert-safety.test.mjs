@@ -438,3 +438,52 @@ test("git IS consulted when a legacy snapshot has no mode", { skip: process.plat
   assert.equal(consulted, 1, "a legacy snapshot has no recorded mode, so git is the fallback");
   assert.equal(fs.readFileSync(file, "utf8"), "mine\n");
 });
+
+test("the legacy mode lookup runs before any filesystem operation", () => {
+  // An ordering invariant, not a behaviour. The lookup shells out to git, and
+  // every subprocess is a window in which a watcher could swap the target's
+  // parent directory for a symlink; anything the restore does afterwards would
+  // follow the swap. Placing it after mkdir and lstat was a real finding.
+  //
+  // The probe: delete the parent directory before reverting. mkdirSync will
+  // recreate it, so if the resolver is called first the directory must not yet
+  // exist when it runs.
+  const { root } = makeRepo();
+  const dir = path.join(root, "sub");
+  const file = path.join(dir, "legacy.txt");
+  fs.mkdirSync(dir);
+  fs.writeFileSync(file, "mine\n");
+
+  const baseline = captureBaseline(root);
+  // Pre-0.4.0 format: a bare base64 string, so no mode is recorded and the
+  // git lookup is the fallback.
+  baseline.contents["sub/legacy.txt"] = fs.readFileSync(file).toString("base64");
+
+  // The agent removes the file and its directory. Restoring it therefore has
+  // to recreate the parent, which is what makes the probe below meaningful.
+  fs.rmSync(dir, { recursive: true, force: true });
+  const diff = diffAgainstBaseline(baseline);
+  assert.equal(diff.changed.length, 1, "the deletion should be attributed to the agent");
+
+  let directoryExistedWhenResolved = null;
+  revertPaths(root, baseline, diff.changed, {
+    resolveLegacyMode: () => {
+      directoryExistedWhenResolved = fs.existsSync(dir);
+      return 0o644;
+    }
+  });
+
+  // On Windows the mode is never resolved at all, which is also correct: there
+  // is no subprocess and therefore no window.
+  if (process.platform === "win32") {
+    assert.equal(directoryExistedWhenResolved, null, "no mode lookup is needed on Windows");
+  } else {
+    assert.equal(
+      directoryExistedWhenResolved,
+      false,
+      "the lookup must happen before mkdirSync recreates the parent"
+    );
+  }
+
+  assert.equal(fs.readFileSync(file, "utf8"), "mine\n");
+});

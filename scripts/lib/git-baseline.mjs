@@ -329,12 +329,33 @@ function decodeSnapshot(stored) {
  * Put a decoded snapshot back on disk.
  *
  * A symlink is unlinked and recreated, because writing to it would follow it
- * and could clobber a file outside the repository. A regular file is written
- * in place, which preserves its inode and its mode; the recorded mode is
- * reapplied anyway so an executable bit survives even when the file had to be
- * created fresh.
+ * and could clobber a file outside the repository. A regular file goes to a
+ * temp path and is renamed over the target, which cannot follow a hard link.
+ *
+ * Every decision that can run a subprocess is made BEFORE any filesystem call.
+ * That ordering is the whole point: each subprocess is a window during which a
+ * watcher could swap the target's parent directory for a symlink, and anything
+ * this function does afterwards would follow the swap.
  */
 function writeSnapshot(absolute, replacement, { resolveLegacyMode = () => null } = {}) {
+  // Mode first, before touching the filesystem at all.
+  //
+  // `replacement.mode` is genuine pre-job state. Anything read off disk now is
+  // not: it is whatever the agent left behind, so a `chmod 777` would be
+  // preserved as though the user had chosen it. Legacy records predate the mode
+  // field, so git supplies the real pre-job mode there, or 0600 if it cannot.
+  //
+  // The lookup is lazy because it costs a subprocess per file and is needed
+  // only for a legacy snapshot on POSIX. It is also resolved here rather than
+  // further down: it used to run after mkdir and lstat, which handed a watcher
+  // a subprocess-long window to replace the parent directory with a symlink,
+  // and the write and rename would then have followed it outside the
+  // repository. Cheap to get right, invisible when wrong.
+  let mode = null;
+  if (process.platform !== "win32") {
+    mode = replacement.mode !== null ? replacement.mode & 0o777 : (resolveLegacyMode() ?? 0o600);
+  }
+
   fs.mkdirSync(path.dirname(absolute), { recursive: true });
 
   let current = null;
@@ -374,20 +395,6 @@ function writeSnapshot(absolute, replacement, { resolveLegacyMode = () => null }
     path.dirname(absolute),
     `.ea-restore-${randomBytes(8).toString("hex")}.tmp`
   );
-
-  // Mode. `replacement.mode` is genuine pre-job state. Anything else is not:
-  // the mode on disk right now is whatever the agent left behind, so a
-  // `chmod 777` or `chmod 000` would be preserved as though it were original.
-  // Legacy records predate the mode field, so the answer there is 0600 unless
-  // git can supply the real pre-job mode.
-  // Resolved lazily. Looking up git's recorded mode costs a subprocess per
-  // file, and it is needed only for a legacy snapshot on POSIX. Computing it
-  // eagerly turned a large dirty-tree revert into one `git ls-tree` per path,
-  // including on Windows where the result is discarded.
-  let mode = null;
-  if (process.platform !== "win32") {
-    mode = replacement.mode !== null ? replacement.mode & 0o777 : (resolveLegacyMode() ?? 0o600);
-  }
 
   try {
     fs.writeFileSync(tmp, replacement.buffer, { flag: "wx", mode: mode ?? 0o600 });
