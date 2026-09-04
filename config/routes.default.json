@@ -110,10 +110,13 @@
     },
 
     "astra": {
-      "description": "GPT-6, shipping as gpt-6-astra. Reserved: activates by itself the moment a matching model appears, and being an OpenAI model it defaults to Codex like sol and luna.",
+      "description": "GPT-6, shipping as gpt-6-astra. Live on the API, so it routes through OpenCode rather than Codex: a ChatGPT sign-in is refused outright for this model.",
+
+      "//backend": "Unlike sol and luna, this defaults to OpenCode. Codex on a ChatGPT account answers a gpt-6-astra request with a 400 saying the model is not supported for that account type, which is why the codex candidates below stay pending: if that changes, the local model cache lists it and the route promotes on its own.",
+
       "spoken": ["astra", "gpt-6-astra", "gpt6 astra", "gpt 6 astra", "gpt-6", "gpt6", "gpt 6"],
       "reserved": true,
-      "defaultBackend": "codex",
+      "defaultBackend": "opencode",
       "watchPatterns": ["gpt-6", "astra"],
       "backends": {},
 
