@@ -12,7 +12,7 @@
 import process from "node:process";
 
 import { parseArgs } from "./lib/args.mjs";
-import { normalizeArgv } from "./lib/tokenize.mjs";
+import { extractPath, normalizeArgv } from "./lib/tokenize.mjs";
 import { doctor } from "./lib/cmd/doctor.mjs";
 import { register, unregister, workspaces } from "./lib/cmd/register.mjs";
 import { routes } from "./lib/cmd/routes.mjs";
@@ -36,7 +36,7 @@ Human-invoked:
   delegate --task <text> [--model kimi] [--route standard|fast]
            [--role builder|fixer|researcher] [--write]
            [--background] [--timeout <seconds>] [--allow-dirty-tree]
-           [--dir <path>]
+           [--unattended] [--dir <path>]
                                 Dispatch a handoff to an external model
   permit <job-id> <request-id> allow|reject
                                 Answer one pending permission request
@@ -55,22 +55,8 @@ Maintenance:
 
 const DELEGATE_SPEC = {
   valueOptions: ["task", "model", "route", "role", "timeout", "dir", "budget"],
-  boolOptions: ["write", "background", "wait", "allow-dirty-tree"]
+  boolOptions: ["write", "background", "wait", "allow-dirty-tree", "unattended"]
 };
-
-/**
- * Reassemble a path from the positional arguments.
- *
- * Splitting the argument string is unavoidable, because a slash command must
- * quote `$ARGUMENTS` to keep a Windows path's backslashes and that delivers
- * everything as one entry. But splitting then breaks a path containing a
- * space, and `C:\Program Files\repo` is not an exotic input. Rejoining the
- * non-flag positionals restores it, so the common case works unquoted and
- * quoting is merely also supported.
- */
-function pathArg(positionals) {
-  return positionals.length === 0 ? undefined : positionals.join(" ");
-}
 
 const COMMANDS = {
   doctor: () => {
@@ -90,22 +76,22 @@ const COMMANDS = {
     return 0;
   },
 
-  register: (argv) => {
-    const { options, positionals } = parseArgs(argv, {
-      boolOptions: ["allow-external", "force"]
-    });
+  register: (argv, raw) => {
+    // Read from the raw string rather than parsed tokens. A path is never
+    // reassembled from pieces, so `C:\My  Projects` keeps both spaces and
+    // `C:\Users\O'Brien` keeps its apostrophe.
+    const { path, flags } = extractPath(raw, ["allow-external", "force"]);
     process.stdout.write(
-      `${register(pathArg(positionals), {
-        allowExternal: Boolean(options["allow-external"]),
-        force: Boolean(options.force)
+      `${register(path, {
+        allowExternal: flags.has("allow-external"),
+        force: flags.has("force")
       })}\n`
     );
     return 0;
   },
 
-  unregister: (argv) => {
-    const { positionals } = parseArgs(argv, {});
-    process.stdout.write(`${unregister(pathArg(positionals))}\n`);
+  unregister: (argv, raw) => {
+    process.stdout.write(`${unregister(extractPath(raw).path)}\n`);
     return 0;
   },
 
@@ -114,15 +100,13 @@ const COMMANDS = {
     return 0;
   },
 
-  "server-start": async (argv) => {
-    const { positionals } = parseArgs(argv, {});
-    process.stdout.write(`${await serverStart(pathArg(positionals))}\n`);
+  "server-start": async (argv, raw) => {
+    process.stdout.write(`${await serverStart(extractPath(raw).path)}\n`);
     return 0;
   },
 
-  "server-stop": async (argv) => {
-    const { positionals } = parseArgs(argv, {});
-    process.stdout.write(`${await serverStop(pathArg(positionals))}\n`);
+  "server-stop": async (argv, raw) => {
+    process.stdout.write(`${await serverStop(extractPath(raw).path)}\n`);
     return 0;
   },
 
@@ -136,6 +120,16 @@ const COMMANDS = {
 
     // The task can come from --task or from whatever is left over, so a long
     // handoff after `--` does not have to be quoted twice.
+    //
+    // Both at once means an unquoted --task value was cut at its first space
+    // and the rest is sitting in positionals. Dispatching would send a paid
+    // job with a one-word handoff, so it is refused instead.
+    if (options.task !== undefined && positionals.length > 0) {
+      throw new Error(
+        `--task was given as "${options.task}" and ${positionals.length} more argument(s) follow it. Quote the task, or put it after --.`
+      );
+    }
+
     const task = options.task ?? positionals.join(" ");
 
     process.stdout.write(
@@ -149,7 +143,8 @@ const COMMANDS = {
         wait: !options.background,
         timeoutSeconds: options.timeout ? Number(options.timeout) : undefined,
         budgetSeconds: options.budget ? Number(options.budget) : undefined,
-        allowDirtyTree: Boolean(options["allow-dirty-tree"])
+        allowDirtyTree: Boolean(options["allow-dirty-tree"]),
+        unattended: Boolean(options.unattended)
       })}\n`
     );
     return 0;
@@ -181,7 +176,20 @@ const COMMANDS = {
 
   revert: (argv) => {
     const { positionals } = parseArgs(argv, {});
-    process.stdout.write(`${revert(positionals[0])}\n`);
+    const jobID = positionals[0];
+
+    // Named explicitly, always. Every other job subcommand falls back to the
+    // most recent job when given nothing, which is a harmless convenience for
+    // reading state. revert restores and deletes files, and with the same
+    // fallback a bare `revert` — or the empty $ARGUMENTS the slash command
+    // produces when you type none — silently picked a victim job.
+    if (!jobID) {
+      throw new Error(
+        "revert needs a job id. It restores and deletes files, so it will not guess which job you meant. Run `status` to list them."
+      );
+    }
+
+    process.stdout.write(`${revert(jobID)}\n`);
     return 0;
   },
 
@@ -211,7 +219,7 @@ async function main() {
     return 2;
   }
 
-  return await command(argv);
+  return await command(argv, rest.join(" "));
 }
 
 try {

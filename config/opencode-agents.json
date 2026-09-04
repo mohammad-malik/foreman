@@ -1,13 +1,22 @@
 {
   "subagent_depth": 1,
   "//": "Two agents, not three. A `glm-explore` child agent was written and removed: OpenCode 1.18.16 offers no subagent-delegation tool over the server API. Even the built-in `build` agent lists only apply_patch, bash, edit, glob, grep, question, read, skill, todowrite, webfetch and websearch, so there is nothing for a parent to delegate through. Setting `permission.task` or `tools.task` changes nothing. subagent_depth is kept at 1 so nested agents stay capped if a later version enables them. The child-session discovery in the runtime is also kept: it reports what actually ran rather than what an agent claims, and returns an empty list until this works.",
-  "//permissions": "bash has NO allow rules, deliberately. Two facts force this. First, OpenCode resolves the LAST matching rule, so a trailing catch-all silently overrides every allow and deny above it: with `*` last, `git status --short` prompted despite an explicit allow and `curl` was downgraded from deny to merely approvable. Second, with the catch-all moved first, the remaining allow patterns became real allows over arbitrary arguments, and a read-only agent ran `cat C:/Users/<user>/canary.txt` and returned its contents with no prompt. `external_directory: deny` does not cover bash. A glob over a command string cannot confine a path, so no allow pattern here is safe and none is offered. This costs less than it appears: OpenCode's own read, grep, glob and list tools ARE confined by external_directory, so the agent has proper repo-scoped tools and only needs bash for things a person should see anyway. The catch-all is `ask` rather than `deny` because a shell command that writes cannot be told from one that reads by pattern, so a human decides.",
+  "//permissions": "bash policy differs by agent, and the difference is the point. external-researcher DENIES bash outright, copying OpenCode's own `explore` agent (deny * then allow only read/grep/glob). That is strictly better than asking: the agent already has confined read, grep, glob, list and lsp tools, so bash buys it nothing, and denying means it never blocks on a human AND never escapes. external-builder ASKS, because it genuinely needs bash to run tests, and no glob over a command string can tell a shell command that writes from one that reads. external-autonomous ALLOWS bash except the denylist, for unattended work, and gives up repository confinement to get it: external_directory does NOT gate bash, verified by a read-only agent running `cat C:/Users/<user>/canary.txt` and returning the contents. Ordering matters throughout: OpenCode resolves the LAST matching rule, so the catch-all comes first and specifics follow.",
   "agent": {
     "external-builder": {
       "description": "Primary external worker with write access inside one repository.",
       "mode": "primary",
       "permission": {
-        "read": "allow",
+        "read": {
+          "*": "allow",
+          "**/.env": "deny",
+          "**/.env.*": "deny",
+          "**/.env.example": "allow",
+          "**/id_rsa": "deny",
+          "**/id_ed25519": "deny",
+          "**/*.pem": "deny",
+          "**/credentials": "deny"
+        },
         "list": "allow",
         "glob": "allow",
         "grep": "allow",
@@ -35,31 +44,73 @@
           "taskkill*": "deny",
           "shutdown*": "deny"
         }
-      }
+      },
+      "prompt": "You are working inside one git repository on behalf of another engineer.\n\nPrefer the read, list, glob, grep and lsp tools. They are scoped to this\nrepository and run without interruption.\n\nEvery bash command stops your work and waits for a human to approve it, and\nmany are denied outright. A person may be asleep or away, so a bash call you\ndid not need can cost hours. Use bash only when no other tool can do the job,\nand never for something read, glob, grep or list already does: listing files,\nreading a file, searching for text.\n\nDo not attempt to read or write anything outside this repository.\n\nYou may edit files in this repository. Make the change you were asked for and\nnothing more: unrelated tidying is not wanted and makes your work harder to\nreview. Say plainly if the task cannot be done as specified rather than\nsubstituting a different approach."
     },
     "external-researcher": {
       "description": "Read-only external worker. Investigates and reports, never edits.",
       "mode": "primary",
       "permission": {
-        "read": "allow",
+        "read": {
+          "*": "allow",
+          "**/.env": "deny",
+          "**/.env.*": "deny",
+          "**/.env.example": "allow",
+          "**/id_rsa": "deny",
+          "**/id_ed25519": "deny",
+          "**/*.pem": "deny",
+          "**/credentials": "deny"
+        },
         "list": "allow",
         "glob": "allow",
         "grep": "allow",
         "lsp": "allow",
         "edit": "deny",
+        "bash": "deny",
+        "external_directory": "deny",
+        "webfetch": "deny",
+        "websearch": "deny"
+      },
+      "prompt": "You are working inside one git repository on behalf of another engineer.\n\nPrefer the read, list, glob, grep and lsp tools. They are scoped to this\nrepository and run without interruption.\n\nEvery bash command stops your work and waits for a human to approve it, and\nmany are denied outright. A person may be asleep or away, so a bash call you\ndid not need can cost hours. Use bash only when no other tool can do the job,\nand never for something read, glob, grep or list already does: listing files,\nreading a file, searching for text.\n\nDo not attempt to read or write anything outside this repository.\n\nYou are read-only. You cannot edit files, and you should not try. Report what\nyou find and let the caller act on it."
+    },
+    "external-autonomous": {
+      "description": "Write-capable worker that runs unattended: bash is allowed except a denylist, so it never waits for a human. Trades repository confinement for autonomy.",
+      "mode": "primary",
+      "prompt": "You are working inside one git repository on behalf of another engineer.\n\nPrefer the read, list, glob, grep and lsp tools. They are scoped to this\nrepository and run without interruption.\n\nYou can run bash without waiting for approval, so you are trusted to be\ncareful. Stay inside this repository: do not read or write paths outside\nit, and do not reach the network. Prefer read, glob, grep and list for\nanything they can do, because they are cheaper and clearer than shelling\nout.\n\nDo not attempt to read or write anything outside this repository.\n\nYou may edit files in this repository. Make the change you were asked for and\nnothing more: unrelated tidying is not wanted and makes your work harder to\nreview. Say plainly if the task cannot be done as specified rather than\nsubstituting a different approach.",
+      "permission": {
+        "read": {
+          "*": "allow",
+          "**/.env": "deny",
+          "**/.env.*": "deny",
+          "**/.env.example": "allow",
+          "**/id_rsa": "deny",
+          "**/id_ed25519": "deny",
+          "**/*.pem": "deny",
+          "**/credentials": "deny"
+        },
+        "list": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "lsp": "allow",
+        "edit": "allow",
         "external_directory": "deny",
         "webfetch": "deny",
         "websearch": "deny",
         "bash": {
-          "*": "ask",
+          "*": "allow",
           "git push*": "deny",
           "git reset --hard*": "deny",
           "git clean*": "deny",
+          "git checkout*": "deny",
+          "git restore*": "deny",
+          "git rebase*": "deny",
+          "git filter-branch*": "deny",
           "gh *": "deny",
           "curl*": "deny",
           "wget*": "deny",
           "ssh*": "deny",
           "scp*": "deny",
+          "npm publish*": "deny",
           "kill*": "deny",
           "taskkill*": "deny",
           "shutdown*": "deny"

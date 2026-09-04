@@ -23,18 +23,57 @@ const CONFIG = JSON.parse(
 
 const agents = Object.entries(CONFIG.agent);
 
-test("every agent puts the bash catch-all first", () => {
+test("any agent with a bash rule map puts the catch-all first", () => {
   for (const [name, agent] of agents) {
-    const keys = Object.keys(agent.permission.bash);
-    assert.equal(keys[0], "*", `${name}: the catch-all must be the first rule, or it overrides everything`);
+    const bash = agent.permission.bash;
+    if (typeof bash === "string") {
+      continue; // A blanket policy has no ordering to get wrong.
+    }
+    assert.equal(
+      Object.keys(bash)[0],
+      "*",
+      `${name}: the catch-all must be the first rule, or it overrides everything`
+    );
   }
 });
 
-test("the catch-all asks rather than denying", () => {
+test("the researcher denies bash outright rather than asking", () => {
+  // Copied from OpenCode's own `explore` agent, which denies everything and
+  // allows only read, grep and glob. Asking would have been strictly worse:
+  // the agent already has confined read, list, glob, grep and lsp tools, so
+  // bash buys it nothing, while `ask` costs a human interruption. Denying
+  // means it neither blocks on a person nor escapes the repository.
+  assert.equal(CONFIG.agent["external-researcher"].permission.bash, "deny");
+});
+
+test("the builder asks, because it needs bash for tests", () => {
   // No pattern reliably separates a shell command that writes from one that
   // reads, so an unmatched command goes to a person.
+  assert.equal(CONFIG.agent["external-builder"].permission.bash["*"], "ask");
+});
+
+test("only the unattended agent allows bash without asking", () => {
+  const allowing = agents.filter(
+    ([, agent]) => typeof agent.permission.bash === "object" && agent.permission.bash["*"] === "allow"
+  );
+
+  assert.deepEqual(
+    allowing.map(([name]) => name),
+    ["external-autonomous"],
+    "an allow catch-all gives up repository confinement, so exactly one opt-in agent may have it"
+  );
+});
+
+test("secrets are denied to every agent", () => {
+  // OpenCode's own agents ask before reading these. A delegation has no
+  // business in them at all.
   for (const [name, agent] of agents) {
-    assert.equal(agent.permission.bash["*"], "ask", `${name}`);
+    const read = agent.permission.read;
+    assert.equal(typeof read, "object", `${name}: read must be a rule map, not a blanket policy`);
+    assert.equal(read["**/.env"], "deny", name);
+    assert.equal(read["**/.env.*"], "deny", name);
+    assert.equal(read["**/*.pem"], "deny", name);
+    assert.equal(read["**/.env.example"], "allow", `${name}: an example file holds no secret`);
   }
 });
 
@@ -48,6 +87,7 @@ test("dangerous commands are denied on the write-capable agent", () => {
 test("the read-only agent cannot edit or reach outside the repository", () => {
   const permission = CONFIG.agent["external-researcher"].permission;
   assert.equal(permission.edit, "deny");
+  assert.equal(permission.bash, "deny");
   assert.equal(permission.external_directory, "deny");
   assert.equal(permission.webfetch, "deny");
   assert.equal(permission.websearch, "deny");

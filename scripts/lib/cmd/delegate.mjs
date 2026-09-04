@@ -26,11 +26,21 @@ export const ROLES = {
   researcher: { agent: "external-researcher", needsWrite: false }
 };
 
+/**
+ * The unattended variant of a write-capable role.
+ *
+ * Its bash catch-all is allow rather than ask, so the agent never blocks on a
+ * person. That is the whole benefit and the whole cost: `external_directory`
+ * does not gate bash, so an unattended agent can read and write outside the
+ * repository. It is opt-in per delegation for that reason, never a default.
+ */
+const UNATTENDED_AGENT = "external-autonomous";
+
 const DEFAULT_WAIT_MS = 120_000;
 const MAX_WAIT_MS = 300_000;
 const DEFAULT_BUDGET_MS = 15 * 60 * 1000;
 
-function chooseAgent(role, write) {
+function chooseAgent(role, write, unattended) {
   const spec = ROLES[role];
   if (!spec) {
     throw new Error(`Unknown role "${role}". Use one of: ${Object.keys(ROLES).join(", ")}.`);
@@ -46,6 +56,10 @@ function chooseAgent(role, write) {
       "Role \"researcher\" is read-only. Drop --write, or use --role builder if edits are intended."
     );
   }
+  if (unattended) {
+    return { agent: UNATTENDED_AGENT, downgraded: false, unattended: true };
+  }
+
   return { agent: spec.agent, downgraded: false };
 }
 
@@ -59,10 +73,17 @@ export async function delegate({
   wait = true,
   timeoutSeconds,
   allowDirtyTree = false,
+  unattended = false,
   budgetSeconds
 }) {
   if (!task || task.trim() === "") {
     throw new Error("A task is required. Write the handoff you would give a subagent.");
+  }
+
+  if (unattended && !write) {
+    throw new Error(
+      "--unattended only applies to a write-capable role. A researcher already runs without interruption: its bash is denied outright rather than asked, so there is nothing to wait for."
+    );
   }
 
   const { workspace } = requireWorkspaceFor(directory ?? process.cwd(), { requireExternal: true });
@@ -75,7 +96,7 @@ export async function delegate({
   const version = detectVersion();
   const inventory = loadInventory({ version: version.version });
   const resolved = resolveRoute(model, route, inventory.models);
-  const { agent, downgraded } = chooseAgent(role, write);
+  const { agent, downgraded } = chooseAgent(role, write, unattended);
 
   let baseline = null;
   if (write) {
@@ -146,6 +167,14 @@ export async function delegate({
       ["session", session.id]
     ])
   ];
+
+  if (unattended) {
+    header.push(
+      bullet(
+        "unattended: bash runs without asking, so this agent is NOT confined to the repository and may read or write outside it"
+      )
+    );
+  }
 
   if (downgraded) {
     header.push(

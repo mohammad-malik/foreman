@@ -140,8 +140,21 @@ export class OpencodeApi {
    *
    * There is a `/wait` endpoint, and in 1.18.16 it answers 503 with "Session
    * wait is not available yet", so polling is not a shortcut here: it is the
-   * only thing that works. A turn is done when the newest assistant message
-   * carries a completion timestamp.
+   * only thing that works.
+   *
+   * The signal is the newest assistant message's `finish` reason. Nothing else
+   * is reliable. Completion timestamps are not: every message in a multi-step
+   * turn carries one as soon as that step ends. Presence of text is not
+   * either, and that mistake had teeth: a model that narrates before calling
+   * tools ("I'll start by reading the relevant files") produces a completed
+   * message with text on its very first step, so a real job was reported
+   * finished after eight seconds with a preamble as its answer while the agent
+   * carried on working.
+   *
+   * `finish` is "tool-calls" while the model intends to continue and "stop"
+   * when the turn is genuinely over. Anything else completed is also treated
+   * as over, because a turn that ended on a length limit or an error is not
+   * going to produce more on its own.
    */
   async turnState(sessionID) {
     const list = messageList(await this.messages(sessionID));
@@ -155,18 +168,15 @@ export class OpencodeApi {
 
     // messageList puts these in conversation order, so the newest is last.
     const newest = assistants[assistants.length - 1];
-
-    // A turn can span several assistant messages: a tool call, then the reply.
-    // Only a completed message with actual text means the agent is done
-    // talking, otherwise a mid-turn tool call reads as a finished job.
     const completed = Boolean(newest?.time?.completed);
-    const hasText = (newest?.content ?? newest?.parts ?? []).some(
-      (part) => part?.type === "text" && String(part.text ?? "").trim() !== ""
-    );
+    const finish = newest?.finish ?? null;
+
+    const stillGoing = !completed || finish === null || finish === "tool-calls";
 
     return {
-      state: completed && hasText ? "idle" : "working",
-      assistants: assistants.length
+      state: stillGoing ? "working" : "idle",
+      assistants: assistants.length,
+      finish
     };
   }
 
