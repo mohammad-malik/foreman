@@ -136,6 +136,15 @@ export function captureBaseline(root) {
 
   const hashes = Object.create(null);
   const contents = Object.create(null);
+  const skippedContents = Object.create(null);
+  const budget = { remaining: RESTORE_TOTAL_CAP };
+
+  // Whether each dirty path was staged before the job. Restoring the working
+  // tree without restoring this leaves the agent's blob in the index, so
+  // `git diff --cached` still shows its change and the next commit picks it up.
+  const staged = new Set(
+    status.filter((entry) => entry.code[0] !== " " && entry.code[0] !== "?").map((entry) => entry.path)
+  );
 
   for (const entry of status) {
     const absolute = path.join(root, entry.path);
@@ -145,8 +154,12 @@ export function captureBaseline(root) {
     // them back. Without this an untracked file that existed before the job
     // has nothing to restore from, and the only options are to delete it
     // (losing the user's work) or leave the agent's edit in place.
-    const stored = readForRestore(absolute);
-    if (stored !== null) {
+    const stored = readForRestore(absolute, budget);
+    if (stored.kind === "skipped") {
+      // Recorded so revert can say why it will not touch this path, instead of
+      // silently leaving the agent's edit in place.
+      skippedContents[entry.path] = stored.reason;
+    } else {
       contents[entry.path] = stored;
     }
   }
@@ -158,28 +171,50 @@ export function captureBaseline(root) {
     dirty: status.length > 0,
     status,
     hashes,
-    contents
+    contents,
+    skippedContents,
+    staged: [...staged]
   };
 }
 
 /**
- * Base64 of a file small enough to keep a copy of.
+ * A copy of a pre-existing dirty file, small enough to keep.
  *
- * Capped because this lands in a job record: a repository with a large
- * uncommitted asset should not push a hundred megabytes into plugin state.
- * Anything over the cap is reported as unrevertable rather than deleted.
+ * Two caps, not one. The per-file cap stops a single large uncommitted asset
+ * from landing in a job record; the aggregate cap stops a generated tree of
+ * hundreds of sub-megabyte files from serialising hundreds of megabytes, which
+ * the per-file cap alone does nothing about.
+ *
+ * Symlinks are recorded as links rather than followed. `statSync` reports a
+ * link to a regular file as a regular file, so reading it would copy the
+ * target's bytes, and restoring later would write THROUGH the link, which can
+ * clobber a file outside the repository entirely.
  */
 const RESTORE_SIZE_CAP = 1024 * 1024;
+const RESTORE_TOTAL_CAP = 16 * 1024 * 1024;
 
-function readForRestore(absolutePath) {
+function readForRestore(absolutePath, budget) {
   try {
-    const stat = fs.statSync(absolutePath);
-    if (!stat.isFile() || stat.size > RESTORE_SIZE_CAP) {
-      return null;
+    const stat = fs.lstatSync(absolutePath);
+
+    if (stat.isSymbolicLink()) {
+      return { kind: "symlink", target: fs.readlinkSync(absolutePath) };
     }
-    return fs.readFileSync(absolutePath).toString("base64");
-  } catch {
-    return null;
+    if (!stat.isFile()) {
+      return { kind: "skipped", reason: "it is not a regular file" };
+    }
+    if (stat.size > RESTORE_SIZE_CAP) {
+      return { kind: "skipped", reason: `it is larger than the ${RESTORE_SIZE_CAP / 1024 / 1024} MB per-file snapshot limit` };
+    }
+    if (stat.size > budget.remaining) {
+      return { kind: "skipped", reason: "the snapshot budget for this job was already full" };
+    }
+
+    const content = fs.readFileSync(absolutePath).toString("base64");
+    budget.remaining -= stat.size;
+    return { kind: "file", content };
+  } catch (error) {
+    return { kind: "skipped", reason: `it could not be read (${error.code ?? error.message})` };
   }
 }
 
@@ -241,6 +276,25 @@ export function diffAgainstBaseline(baseline) {
   };
 }
 
+/**
+ * Put one path's index entry back the way it was before the job.
+ *
+ * Restoring file bytes is only half of it. If the agent staged its edit, the
+ * index still holds the agent's blob afterwards, so `git diff --cached` shows
+ * a change the user never made and the next commit quietly includes it.
+ */
+function restoreIndexState(root, baseline, filePath) {
+  const wasStaged = (baseline.staged ?? []).includes(filePath);
+
+  // Drop whatever the agent staged.
+  git(root, ["reset", "-q", "--", filePath], { allowFailure: true });
+
+  if (wasStaged) {
+    // It was staged before the job, so put the restored content back in.
+    git(root, ["add", "--", filePath], { allowFailure: true });
+  }
+}
+
 /** Compact per-file diffstat for the paths an agent actually touched. */
 export function diffStat(root, paths) {
   if (paths.length === 0) {
@@ -274,12 +328,31 @@ export function revertPaths(root, baseline, changed) {
       if (stored === undefined) {
         skipped.push({
           path: entry.path,
-          reason: "it had uncommitted changes before the job and was too large to keep a copy of"
+          reason: `it had uncommitted changes before the job and ${baseline.skippedContents?.[entry.path] ?? "no copy of it was kept"}`
         });
         continue;
       }
+
+      // Remove first rather than writing over the path. Writing through a
+      // symlink follows it, which could overwrite a file outside the
+      // repository, and would leave a link where a link should be recreated.
+      try {
+        if (fs.lstatSync(absolute)) {
+          fs.unlinkSync(absolute);
+        }
+      } catch {
+        // Not there any more, which is fine.
+      }
+
       fs.mkdirSync(path.dirname(absolute), { recursive: true });
-      fs.writeFileSync(absolute, Buffer.from(stored, "base64"));
+
+      if (stored.kind === "symlink") {
+        fs.symlinkSync(stored.target, absolute);
+      } else {
+        fs.writeFileSync(absolute, Buffer.from(stored.content, "base64"));
+      }
+
+      restoreIndexState(root, baseline, entry.path);
       restored.push(entry.path);
       continue;
     }
@@ -301,6 +374,7 @@ export function revertPaths(root, baseline, changed) {
 
     if (existedAtBaseline) {
       git(root, ["checkout", baseline.head, "--", entry.path], { allowFailure: true });
+      restoreIndexState(root, baseline, entry.path);
       restored.push(entry.path);
       continue;
     }

@@ -17,6 +17,11 @@ import { reconcileAll } from "../reconcile.mjs";
 import { sweep } from "../servers.mjs";
 import { collectResult } from "./result.mjs";
 
+// Well inside the Stop hook's 30s budget, leaving room for the sweep and for
+// rendering the message.
+const POLL_DEADLINE_MS = 10_000;
+const POLL_REQUEST_TIMEOUT_MS = 4_000;
+
 export async function notify() {
   const workspaces = listWorkspaces();
   if (workspaces.length === 0) {
@@ -34,10 +39,21 @@ export async function notify() {
   // no waiter behind, so without this the job sits at "running" until
   // reconciliation eventually fails it at its budget. That would make the
   // headline feature quietly useless.
+  //
+  // Bounded by a deadline well inside the hook's own 30s timeout. A server
+  // process that is alive but wedged would otherwise burn a full per-request
+  // timeout on each job in turn, stalling every turn of the conversation until
+  // the hook is killed and taking the sweep and the notifications down with
+  // it. Jobs not reached simply wait for the next turn.
+  const deadline = Date.now() + POLL_DEADLINE_MS;
+
   for (const workspace of workspaces) {
     for (const job of activeJobs(workspace.slug)) {
+      if (Date.now() > deadline) {
+        break;
+      }
       try {
-        await collectResult(workspace.slug, job.id);
+        await collectResult(workspace.slug, job.id, { timeout: POLL_REQUEST_TIMEOUT_MS });
       } catch {
         // Unreachable server or a vanished session. Reconciliation handles it.
       }

@@ -8,7 +8,7 @@
 
 import { OpencodeApi } from "../opencode-api.mjs";
 import { currentServer } from "../servers.mjs";
-import { diffAgainstBaseline, revertPaths } from "../git-baseline.mjs";
+import { diffAgainstBaseline, diffStat, revertPaths } from "../git-baseline.mjs";
 import {
   ACTIVE_STATUSES,
   describeElapsed,
@@ -151,9 +151,27 @@ export async function cancel(jobID) {
     lines.push("The server was already gone.");
   }
 
-  updateJob(job, { status: "cancelled", finishedAt: new Date().toISOString() });
+  // Recompute the diff now rather than keeping whatever was last collected.
+  // Cancelling makes the job terminal, which freezes its change set, and a
+  // snapshot taken mid-run would permanently omit everything the agent wrote
+  // between then and the interrupt, hiding those files from both the report
+  // and revert.
+  let changes = job.changes ?? null;
+  if (job.baseline) {
+    try {
+      const diff = diffAgainstBaseline(job.baseline);
+      changes = { ...diff, stat: diffStat(job.workspaceRoot, diff.changed.map((e) => e.path)) };
+    } catch {
+      // Keep what we had; the report says it could not be determined.
+    }
+  }
+
+  updateJob(job, { status: "cancelled", finishedAt: new Date().toISOString(), changes });
 
   lines.push(`Job ${job.id} marked cancelled.`);
+  if (changes?.changed?.length) {
+    lines.push(`It changed ${changes.changed.length} file(s) before stopping.`);
+  }
 
   if (job.baseline) {
     // Cancelling stops the work. It does not undo edits already written, and

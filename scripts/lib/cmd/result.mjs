@@ -31,7 +31,7 @@ function workspaceFor(slug) {
  * Safe to call repeatedly, and safe to call after the server is gone: what was
  * already collected stays in the record.
  */
-export async function collectResult(slug, jobID) {
+export async function collectResult(slug, jobID, { timeout } = {}) {
   const job = loadJob(slug, jobID);
   if (!job) {
     throw new Error(`No job ${jobID} in this workspace.`);
@@ -55,7 +55,7 @@ export async function collectResult(slug, jobID) {
   };
 
   if (server) {
-    const api = new OpencodeApi(server);
+    const api = new OpencodeApi(server, { timeout });
 
     try {
       const messages = await api.messages(job.sessionID);

@@ -163,10 +163,17 @@ export function saveConfig(config) {
   fs.renameSync(tmp, file);
 }
 
+/**
+ * Owner-only, because job records are not merely metadata. Under
+ * `--allow-dirty-tree` a baseline embeds copies of the user's uncommitted
+ * files, so a default 0644 under a shared or temporary state directory would
+ * publish private source to every local account. The temp file carries the
+ * same mode, or the content would be briefly world-readable before the rename.
+ */
 export function writeJsonAtomic(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
   fs.renameSync(tmp, file);
 }
 

@@ -98,7 +98,7 @@ test("a pre-existing file too large to copy is skipped, not deleted", () => {
 
   assert.equal(fs.existsSync(big), true, "must never be deleted just because it could not be copied");
   assert.equal(outcome.skipped.length, 1);
-  assert.match(outcome.skipped[0].reason, /too large/);
+  assert.match(outcome.skipped[0].reason, /per-file snapshot limit/);
 });
 
 test("baseline content copies stay out of the record for a clean tree", () => {

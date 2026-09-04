@@ -26,11 +26,16 @@ export class ApiError extends Error {
 }
 
 export class OpencodeApi {
-  constructor(server) {
+  /**
+   * `timeout` sets this instance's default for every request. The Stop hook
+   * passes a short one so a wedged server cannot stall the conversation.
+   */
+  constructor(server, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
     this.server = server;
+    this.defaultTimeout = timeout ?? DEFAULT_TIMEOUT_MS;
   }
 
-  async request(method, endpoint, { body, timeout = DEFAULT_TIMEOUT_MS, query } = {}) {
+  async request(method, endpoint, { body, timeout = this.defaultTimeout, query } = {}) {
     const url = new URL(`${this.server.url}${endpoint}`);
     for (const [key, value] of Object.entries(query ?? {})) {
       if (value !== undefined && value !== null) {
