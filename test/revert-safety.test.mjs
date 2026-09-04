@@ -345,3 +345,47 @@ test("the source file contains no literal NUL bytes", () => {
   );
   assert.equal(source.filter((byte) => byte === 0).length, 0);
 });
+
+test("a legacy snapshot does not inherit permissions the agent set", { skip: process.platform === "win32" }, () => {
+  // The mode on disk at revert time is whatever the agent left behind, so
+  // treating it as pre-job state would preserve a `chmod 777` as though the
+  // user had chosen it. Git's recorded mode is the only trustworthy source
+  // for a record that predates the mode field.
+  const { root, git } = makeRepo();
+  const file = path.join(root, "tracked.txt");
+  fs.chmodSync(file, 0o644);
+  fs.writeFileSync(file, "committed\nuser edit\n");
+
+  const baseline = captureBaseline(root);
+  // Rewrite the snapshot in the pre-0.4.0 format, which carries no mode.
+  baseline.contents["tracked.txt"] = fs.readFileSync(file).toString("base64");
+
+  fs.writeFileSync(file, "committed\nagent edit\n");
+  fs.chmodSync(file, 0o777);
+
+  const diff = diffAgainstBaseline(baseline);
+  revertPaths(root, baseline, diff.changed);
+
+  const mode = fs.statSync(file).mode & 0o777;
+  assert.notEqual(mode, 0o777, "the agent's chmod must not survive the revert");
+  assert.equal(mode, 0o644, "git's recorded mode is the pre-job truth");
+});
+
+test("a long filename can still be restored", () => {
+  // The temp name used to extend the target's basename, so a valid but long
+  // name pushed the temp path past the 255-byte component limit and revert
+  // silently skipped the file, leaving the agent's version in place.
+  const { root } = makeRepo();
+  const longName = `${"n".repeat(240)}.txt`;
+  const file = path.join(root, longName);
+  fs.writeFileSync(file, "mine\n");
+
+  const baseline = captureBaseline(root);
+  fs.writeFileSync(file, "agent edit\n");
+
+  const diff = diffAgainstBaseline(baseline);
+  const outcome = revertPaths(root, baseline, diff.changed);
+
+  assert.deepEqual(outcome.skipped, [], "a long name must not defeat restore");
+  assert.equal(fs.readFileSync(file, "utf8"), "mine\n");
+});

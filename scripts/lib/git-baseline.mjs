@@ -334,7 +334,7 @@ function decodeSnapshot(stored) {
  * reapplied anyway so an executable bit survives even when the file had to be
  * created fresh.
  */
-function writeSnapshot(absolute, replacement) {
+function writeSnapshot(absolute, replacement, { legacyMode = null } = {}) {
   fs.mkdirSync(path.dirname(absolute), { recursive: true });
 
   let current = null;
@@ -362,20 +362,27 @@ function writeSnapshot(absolute, replacement) {
   // The temp path must be created exclusively, or the hole simply moves: the
   // name is predictable, and a process that dropped a symlink or hard link
   // there would have it followed and truncated instead. "wx" fails rather than
-  // opening an existing entry, and a random suffix means a leftover temp file
+  // opening an existing entry, and a random name means a leftover temp file
   // cannot collide either.
-  const tmp = `${absolute}.external-agents-${randomBytes(6).toString("hex")}.tmp`;
+  //
+  // The name is fixed-length rather than derived from the target's, because
+  // most filesystems cap a single path component at 255 bytes: appending to an
+  // already-long basename fails with ENAMETOOLONG, and revert would skip the
+  // file and leave the agent's version in place. It stays in the same
+  // directory so the rename is still atomic.
+  const tmp = path.join(
+    path.dirname(absolute),
+    `.ea-restore-${randomBytes(8).toString("hex")}.tmp`
+  );
 
-  // Legacy snapshots carry no mode. Rather than inventing one, keep whatever
-  // the file has now, so an executable script that predates the mode field
-  // does not come back unusable.
+  // Mode. `replacement.mode` is genuine pre-job state. Anything else is not:
+  // the mode on disk right now is whatever the agent left behind, so a
+  // `chmod 777` or `chmod 000` would be preserved as though it were original.
+  // Legacy records predate the mode field, so the answer there is 0600 unless
+  // git can supply the real pre-job mode.
   let mode = null;
   if (process.platform !== "win32") {
-    if (replacement.mode !== null) {
-      mode = replacement.mode & 0o777;
-    } else if (current?.isFile()) {
-      mode = current.mode & 0o777;
-    }
+    mode = replacement.mode !== null ? replacement.mode & 0o777 : (legacyMode ?? 0o600);
   }
 
   try {
@@ -396,6 +403,41 @@ function writeSnapshot(absolute, replacement) {
     }
     throw error;
   }
+}
+
+/**
+ * The file mode git recorded before the job, or null.
+ *
+ * Only used for legacy snapshots, which predate the mode field. Unlike the
+ * mode currently on disk, this is genuine pre-job state: it comes from the
+ * index as captured at baseline, or from the baseline commit. For a file that
+ * was never tracked there is nothing to consult, and the caller falls back to
+ * something conservative rather than trusting whatever the agent left.
+ */
+function gitRecordedMode(root, baseline, filePath) {
+  const fromIndex = baseline.indexEntries?.[filePath]?.mode;
+  if (fromIndex) {
+    return gitModeToPosix(fromIndex);
+  }
+
+  if (!baseline.head) {
+    return null;
+  }
+
+  const line = git(root, ["ls-tree", baseline.head, "--", filePath], { allowFailure: true }).trim();
+  const match = line.match(/^(\d{6}) /);
+  return match ? gitModeToPosix(match[1]) : null;
+}
+
+/** Git stores only two file modes: executable and not. */
+function gitModeToPosix(gitMode) {
+  if (gitMode === "100755") {
+    return 0o755;
+  }
+  if (gitMode === "100644") {
+    return 0o644;
+  }
+  return null;
 }
 
 /**
@@ -485,7 +527,9 @@ export function revertPaths(root, baseline, changed) {
       }
 
       try {
-        writeSnapshot(absolute, replacement);
+        writeSnapshot(absolute, replacement, {
+          legacyMode: gitRecordedMode(root, baseline, entry.path)
+        });
         restoreIndexState(root, baseline, entry.path);
         restored.push(entry.path);
       } catch (error) {
