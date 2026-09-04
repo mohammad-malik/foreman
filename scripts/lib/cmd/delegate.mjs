@@ -18,6 +18,7 @@ import { readCodexJob, startCodexJob } from "../codex-job.mjs";
 import { resolveRoute } from "../routes.mjs";
 import { OpencodeApi } from "../opencode-api.mjs";
 import { captureBaseline, describeDirty, isGitRepository } from "../git-baseline.mjs";
+import { checkNamedPaths } from "../handoff-paths.mjs";
 import { createJob, hasActiveJobs, updateJob } from "../jobs.mjs";
 import { bullet, heading, keyValue } from "../render.mjs";
 import { collectResult, renderResult } from "./result.mjs";
@@ -133,6 +134,24 @@ export async function delegate({
 
   const { agent, downgraded } = chooseAgent(role, write, unattended);
 
+  // A handoff that names a file which is not there does not fail fast: the
+  // agent hunts for it, improvises, and reports work against files it picked
+  // itself twenty minutes later. For a read-only role a missing path is simply
+  // wrong, since it cannot create anything, so the dispatch is refused. A
+  // builder may legitimately name files it is about to create, so there it is
+  // said out loud and the job proceeds.
+  const paths = checkNamedPaths(workspace.root, task);
+  if (paths.missing.length > 0 && !write) {
+    throw new Error(
+      [
+        `The handoff names ${paths.missing.length} path(s) that do not exist in ${workspace.root}:`,
+        ...paths.missing.map((entry) => `  ${entry}`),
+        "",
+        "A read-only agent cannot create them, so it would spend the job looking for files that are not there. Fix the paths, or use --role builder --write if they are meant to be created."
+      ].join(String.fromCharCode(10))
+    );
+  }
+
   let baseline = null;
   if (write) {
     if (!isGitRepository(workspace.root)) {
@@ -168,6 +187,7 @@ export async function delegate({
       downgraded,
       unattended,
       baseline,
+      missingPaths: paths.missing,
       wait,
       timeoutSeconds,
       budgetSeconds
@@ -237,6 +257,14 @@ export async function delegate({
     );
   }
 
+  if (paths.missing.length > 0) {
+    header.push(
+      bullet(
+        `the handoff names ${paths.missing.length} path(s) that do not exist yet: ${paths.missing.join(", ")}`
+      )
+    );
+  }
+
   if (!wait) {
     header.push("");
     header.push(`Running in the background. It will be reported when it finishes, or run:`);
@@ -283,6 +311,7 @@ async function dispatchCodex({
   downgraded,
   unattended,
   baseline,
+  missingPaths = [],
   wait,
   timeoutSeconds,
   budgetSeconds
@@ -364,6 +393,12 @@ async function dispatchCodex({
       bullet(
         `role "${role}" implies edits but --write was not given, so this runs in a read-only sandbox and cannot change files`
       )
+    );
+  }
+
+  if (missingPaths.length > 0) {
+    header.push(
+      bullet(`the handoff names ${missingPaths.length} path(s) that do not exist yet: ${missingPaths.join(", ")}`)
     );
   }
 
