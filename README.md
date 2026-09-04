@@ -64,3 +64,21 @@ honest; until then that list is empty.
 Requires OpenCode `>=1.18.0 <2.0.0` and Node 20+. Servers run on loopback with a per-server password and are cleaned up 15 minutes after their last job.
 
 `/codex:review` is untouched and remains a separate, human-invoked step.
+
+## Updating after you change the source
+
+`claude plugin update` compares versions, so editing the source without
+bumping `version` in `.claude-plugin/plugin.json` leaves the installed copy
+untouched and you keep running the old code. This is easy to miss: the source
+looks correct and the installed plugin does not match it.
+
+Bump the version, then:
+
+```
+claude plugin marketplace update local
+claude plugin update external-agents@local
+```
+
+For day-to-day iteration, skip installing entirely and run
+`claude --plugin-dir C:\Users\MohammadMalik\Documents\Codex\external-agents`,
+which loads the source directly.
