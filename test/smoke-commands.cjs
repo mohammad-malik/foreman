@@ -32,7 +32,8 @@ const COMMANDS = [
   "status",
   "result",
   "sweep",
-  "notify"
+  "notify",
+  "wait"
 ];
 
 /**

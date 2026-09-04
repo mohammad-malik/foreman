@@ -20,6 +20,7 @@ import { servers, serverStart, serverStop, sweepServers } from "./lib/cmd/server
 import { delegate } from "./lib/cmd/delegate.mjs";
 import { cancel, permit, result, revert, status } from "./lib/cmd/job-commands.mjs";
 import { notify } from "./lib/cmd/notify.mjs";
+import { resolve, waitForJobs } from "./lib/cmd/orchestrate.mjs";
 import { fail } from "./lib/render.mjs";
 
 const USAGE = `external-agents runtime
@@ -29,6 +30,10 @@ Read-only:
   routes [--refresh]            List model aliases and live availability
   workspaces                    List registered workspaces
   servers                       Show the OpenCode server for each workspace
+  resolve <spoken name>         Turn "fast glm 5.3" into an exact model+route
+  wait [job-ids...] [--timeout <s>]
+                                Block until those jobs finish (all active ones
+                                if none named)
   status [job-id]               List jobs, or show one
   result [job-id]               Collect and show a job's outcome
 
@@ -209,6 +214,25 @@ const COMMANDS = {
     }
 
     process.stdout.write(`${revert(jobID)}\n`);
+    return 0;
+  },
+
+  resolve: (argv, raw) => {
+    // The whole remainder is the phrase: "fast glm 5.3" is three tokens.
+    const phrase = typeof raw === "string" ? raw : argv.join(" ");
+    process.stdout.write(`${resolve(phrase)}
+`);
+    return 0;
+  },
+
+  wait: async (argv) => {
+    const { options, positionals } = parseArgs(argv, { valueOptions: ["timeout"] });
+    process.stdout.write(
+      `${await waitForJobs(positionals, {
+        timeoutSeconds: options.timeout ? Number(options.timeout) : 3600
+      })}
+`
+    );
     return 0;
   },
 

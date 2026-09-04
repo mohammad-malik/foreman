@@ -1,8 +1,12 @@
 {
-  "version": 1,
+  "version": 2,
+
+  "//": "Spoken names are DATA, not logic. Nothing in the runtime or the skills knows that 'kimi' or 'glm 5.3' means anything: `resolve` matches a phrase against these lists. Adding a model, or a new way of saying an existing one, is an edit to this file and nothing else. Speed words (fast, quick, cheap, standard, full) are handled by resolve and are not listed here, so 'fast kimi' needs no entry of its own.",
+
   "aliases": {
     "kimi": {
       "description": "Moonshot Kimi K3. General purpose primary worker.",
+      "spoken": ["kimi", "kimi k3", "kimi-k3", "k3", "moonshot"],
       "routes": {
         "standard": { "providerID": "opencode", "modelID": "kimi-k3" },
         "fast": {
@@ -11,8 +15,10 @@
         }
       }
     },
+
     "glm": {
-      "description": "Zhipu GLM. Cheaper primary worker, capable child agent.",
+      "description": "Zhipu GLM 5.2. Cheaper primary worker.",
+      "spoken": ["glm", "glm 5.2", "glm-5.2", "glm5.2", "zhipu"],
       "routes": {
         "standard": { "providerID": "opencode", "modelID": "glm-5.2" },
         "fast": {
@@ -21,8 +27,19 @@
         }
       }
     },
+
     "glm-flash": {
-      "description": "GLM 5.3 Flash. Cheapest option, intended for child agents doing lookups.",
+      "description": "GLM 5.3 Flash. Cheapest option, good for narrow mechanical work.",
+      "spoken": [
+        "glm flash",
+        "glm-flash",
+        "glm 5.3",
+        "glm-5.3",
+        "glm5.3",
+        "glm 5.3 flash",
+        "glm 5p3 flash",
+        "flash"
+      ],
       "routes": {
         "fast": {
           "providerID": "fireworks-ai",
@@ -30,8 +47,10 @@
         }
       }
     },
+
     "astra": {
       "description": "GPT-6, shipping as gpt-6-astra. Reserved: no live provider ID yet.",
+      "spoken": ["astra", "gpt-6-astra", "gpt6 astra", "gpt-6", "gpt6", "gpt 6"],
       "reserved": true,
       "watchPatterns": ["gpt-6", "astra"],
       "routes": {}

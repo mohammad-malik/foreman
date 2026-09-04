@@ -53,6 +53,10 @@ export function listAliases() {
     alias,
     description: entry.description ?? "",
     reserved: Boolean(entry.reserved),
+    // Spoken forms travel with the alias so resolve-spoken needs no second
+    // read of the config, and so a merged user override is included.
+    spoken: entry.spoken ?? [],
+    watchPatterns: entry.watchPatterns ?? [],
     routes: Object.entries(entry.routes ?? {}).map(([route, target]) => ({
       route,
       providerID: target.providerID,
