@@ -18,6 +18,7 @@ import {
   updateJob
 } from "../jobs.mjs";
 import { listWorkspaces } from "../registry.mjs";
+import { reconcileAll } from "../reconcile.mjs";
 import { bullet, heading, keyValue } from "../render.mjs";
 import { collectResult, renderResult } from "./result.mjs";
 
@@ -44,6 +45,9 @@ function findJobAnywhere(jobID) {
 
 export function status(jobID) {
   const workspaces = listWorkspaces();
+
+  // Never report a job as running when it cannot be.
+  reconcileAll(workspaces);
 
   if (jobID) {
     const { job } = findJobAnywhere(jobID);

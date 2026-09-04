@@ -13,6 +13,7 @@
 
 import { listWorkspaces } from "../registry.mjs";
 import { hasActiveJobs, markReported, unreportedJobs } from "../jobs.mjs";
+import { reconcileAll } from "../reconcile.mjs";
 import { sweep } from "../servers.mjs";
 import { collectResult } from "./result.mjs";
 
@@ -23,7 +24,10 @@ export async function notify() {
   }
 
   // The hook fires often, which makes it the natural place to run the cleanup
-  // that no resident process is left alive to do.
+  // that no resident process is left alive to do. Reconcile first: a stranded
+  // job would otherwise look like live work and keep its server from ever
+  // being swept.
+  reconcileAll(workspaces);
   await sweep(workspaces, { hasRunningJobs: hasActiveJobs }).catch(() => []);
 
   const pending = unreportedJobs(workspaces);

@@ -10,6 +10,7 @@
  */
 
 import { listWorkspaces, requireWorkspaceFor } from "../registry.mjs";
+import { reconcileAll } from "../reconcile.mjs";
 import { acquireServer, sweep, touch } from "../servers.mjs";
 import { detectVersion, loadInventory } from "../opencode.mjs";
 import { resolveRoute } from "../routes.mjs";
@@ -67,7 +68,9 @@ export async function delegate({
   const { workspace } = requireWorkspaceFor(directory ?? process.cwd(), { requireExternal: true });
 
   // Housekeeping first: this is what replaces a resident supervisor.
-  await sweep(listWorkspaces(), { hasRunningJobs: hasActiveJobs });
+  const allWorkspaces = listWorkspaces();
+  reconcileAll(allWorkspaces);
+  await sweep(allWorkspaces, { hasRunningJobs: hasActiveJobs });
 
   const version = detectVersion();
   const inventory = loadInventory({ version: version.version });
