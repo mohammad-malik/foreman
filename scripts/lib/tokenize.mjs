@@ -111,6 +111,15 @@ function unquote(value) {
   return value;
 }
 
+/** The option a token names, or undefined: `--route=fast` names `--route`. */
+function optionName(token) {
+  if (!token.startsWith("--")) {
+    return undefined;
+  }
+  const eq = token.indexOf("=");
+  return eq === -1 ? token : token.slice(0, eq);
+}
+
 /**
  * Normalise argv from either calling convention.
  *
@@ -170,4 +179,135 @@ export function extractPath(raw, knownFlags = []) {
   const path = unquote(rest.replace(/^\s+/u, ""));
 
   return { path: path === "" ? undefined : path, flags: found };
+}
+
+/**
+ * Pull one option's value out of a raw argument string, intact, and take the
+ * option out of the parsed tokens.
+ *
+ * parseArgs stops an option value at its first space, which is fine for
+ * --model and wrong for --dir: `--dir C:\Program Files\repo` parses as
+ * `C:\Program` and strands `Files\repo` in positionals. The value is read
+ * from the raw string for the same reason extractPath exists: a path is
+ * sliced, never reassembled, so `C:\My  Projects` keeps both spaces and
+ * `C:\Users\O'Brien\repo` keeps its apostrophe.
+ *
+ * The value runs from `--name` (or `--name=`) to the next recognised option,
+ * `--`, or the end of the string: delegate's slash command puts `--dir`
+ * first, so options after it must still parse as options. An unknown
+ * `--whatever` does not end the value; it stays part of it rather than being
+ * silently swallowed. The last `--name` wins, matching parseArgs.
+ *
+ * Returns the value exactly as written, unquoted if it was quoted, or
+ * undefined when the option is absent or its value is empty or blank, so the
+ * caller can default. `rest` is argv with the option and its value removed.
+ */
+export function extractOption(argv, raw, name, knownFlags = []) {
+  const source = typeof raw === "string" ? raw : "";
+  const marker = `--${name}`;
+  const known = new Set(knownFlags.map((flag) => (flag.startsWith("--") ? flag : `--${flag}`)));
+
+  // Token boundaries and quotes follow tokenize's rules exactly, so the two
+  // never disagree about where a token starts: a quote only opens at a token
+  // start (an apostrophe mid-word stays literal) and a `--dir` inside a
+  // quoted task is prose, not the option.
+  let from = -1;
+  let to = -1;
+  let quote = null;
+  let started = false;
+
+  for (let i = 0; i < source.length; i += 1) {
+    const char = source[i];
+
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      }
+      continue;
+    }
+
+    if (QUOTES.has(char) && !started) {
+      quote = char;
+      started = true;
+      continue;
+    }
+
+    if (WHITESPACE.test(char)) {
+      started = false;
+      continue;
+    }
+
+    if (started) {
+      continue;
+    }
+
+    // i is a token start. `--` ends option parsing, exactly as in parseArgs:
+    // nothing after it is an option, so a value in progress ends here too.
+    if (source.startsWith("--", i) && (i + 2 === source.length || WHITESPACE.test(source[i + 2]))) {
+      if (from !== -1 && to === -1) {
+        to = i;
+      }
+      break;
+    }
+
+    const token = source.slice(i).match(/^--[A-Za-z0-9][A-Za-z0-9-]*/u)?.[0];
+    if (token !== undefined && known.has(token)) {
+      if (token === marker) {
+        from = i + marker.length + (source[i + marker.length] === "=" ? 1 : 0);
+        to = -1;
+      } else if (from !== -1 && to === -1) {
+        to = i;
+      }
+    }
+
+    started = true;
+  }
+
+  if (quote) {
+    // Same refusal as tokenize: an error beats a garbage path with no
+    // indication anything went wrong.
+    throw new ArgumentError(
+      `Unterminated ${quote === '"' ? "double" : "single"} quote. Close the quote, or drop it: a path does not need quoting unless it contains a space.`
+    );
+  }
+
+  if (from === -1) {
+    return { value: undefined, rest: argv };
+  }
+
+  // Surrounding whitespace came from the command line, not the path;
+  // whitespace inside quotes stays, exactly as in extractPath.
+  const text = unquote(source.slice(from, to === -1 ? source.length : to).trim());
+
+  // Remove the option and its value from the parsed tokens as well, or
+  // parseArgs would still cut the value at its first space and strand the
+  // rest in positionals. Value tokens end where the raw value ended: at the
+  // next recognised option, `--`, or the end.
+  const rest = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const token = argv[i];
+
+    if (token === "--") {
+      rest.push(...argv.slice(i));
+      break;
+    }
+
+    if (token === marker) {
+      while (i + 1 < argv.length && argv[i + 1] !== "--" && !known.has(optionName(argv[i + 1]))) {
+        i += 1;
+      }
+      continue;
+    }
+
+    if (optionName(token) === marker) {
+      continue;
+    }
+
+    rest.push(token);
+  }
+
+  // An empty or blank value is the same as omitting the option. The check
+  // runs after unquote because a quoted blank ("   ") survives it.
+  const value = text.trim() === "" ? undefined : text;
+  return { value, rest };
 }

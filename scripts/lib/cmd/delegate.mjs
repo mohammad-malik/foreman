@@ -86,7 +86,11 @@ export async function delegate({
     );
   }
 
-  const { workspace } = requireWorkspaceFor(directory ?? process.cwd(), { requireExternal: true });
+  // An explicitly blank --dir ("" or whitespace-only) is the same as
+  // omitting it: "" is not nullish, so `directory ?? process.cwd()` alone
+  // would hand it to canonicalize, which throws on empty strings.
+  const requested = typeof directory === "string" && directory.trim() === "" ? undefined : directory;
+  const { workspace } = requireWorkspaceFor(requested ?? process.cwd(), { requireExternal: true });
 
   // Housekeeping first: this is what replaces a resident supervisor.
   const allWorkspaces = listWorkspaces();
