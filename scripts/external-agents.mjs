@@ -12,6 +12,7 @@
 import process from "node:process";
 
 import { parseArgs } from "./lib/args.mjs";
+import { normalizeArgv } from "./lib/tokenize.mjs";
 import { doctor } from "./lib/cmd/doctor.mjs";
 import { register, unregister, workspaces } from "./lib/cmd/register.mjs";
 import { routes } from "./lib/cmd/routes.mjs";
@@ -180,7 +181,10 @@ const COMMANDS = {
 };
 
 async function main() {
-  const [name, ...argv] = process.argv.slice(2);
+  // A slash command hands the whole argument string over as one entry, because
+  // it must be shell-quoted to survive Windows backslashes. See tokenize.mjs.
+  const [name, ...rest] = process.argv.slice(2);
+  const argv = normalizeArgv(rest);
 
   if (!name || name === "help" || name === "--help" || name === "-h") {
     process.stdout.write(USAGE);

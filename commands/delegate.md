@@ -25,7 +25,7 @@ Do not paste the conversation. Do not send a one-line restatement of the user's 
 ## Run it
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/external-agents.mjs" delegate --dir <repo> --model <alias> --route <route> --role <role> [--write] [--background] --task "<the handoff>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/external-agents.mjs" delegate --dir "<repo>" --model <alias> --route <route> --role <role> [--write] [--background] --task "<the handoff>"
 ```
 
 Rules that are not yours to override:
