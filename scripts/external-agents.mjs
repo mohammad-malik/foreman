@@ -4,8 +4,9 @@
  *
  * Every slash command in this plugin shells into exactly one place: here.
  * Claude reads job state by running the read-only subcommands through
- * `Bash(node:*)`. Nothing dispatches work to an external model without a
- * human-invoked command upstream of it, which is why there is no MCP server.
+ * `Bash(node:*)`. Dispatch itself is fronted by a slash command carrying
+ * `disable-model-invocation: true`, so a delegation is always something a
+ * person asked for, which is why there is no MCP server.
  */
 
 import process from "node:process";
@@ -15,6 +16,9 @@ import { doctor } from "./lib/cmd/doctor.mjs";
 import { register, unregister, workspaces } from "./lib/cmd/register.mjs";
 import { routes } from "./lib/cmd/routes.mjs";
 import { servers, serverStart, serverStop, sweepServers } from "./lib/cmd/server.mjs";
+import { delegate } from "./lib/cmd/delegate.mjs";
+import { cancel, permit, result, revert, status } from "./lib/cmd/job-commands.mjs";
+import { notify } from "./lib/cmd/notify.mjs";
 import { fail } from "./lib/render.mjs";
 
 const USAGE = `external-agents runtime
@@ -23,10 +27,20 @@ Read-only:
   doctor                        Check the runtime, OpenCode, routes and workspaces
   routes [--refresh]            List model aliases and live availability
   workspaces                    List registered workspaces
-
   servers                       Show the OpenCode server for each workspace
+  status [job-id]               List jobs, or show one
+  result [job-id]               Collect and show a job's outcome
 
 Human-invoked:
+  delegate --task <text> [--model kimi] [--route standard|fast]
+           [--role builder|fixer|researcher] [--write]
+           [--background] [--timeout <seconds>] [--allow-dirty-tree]
+           [--dir <path>]
+                                Dispatch a handoff to an external model
+  permit <job-id> <request-id> allow|reject
+                                Answer one pending permission request
+  cancel [job-id]               Stop a running job
+  revert <job-id>               Restore only the files a job changed
   register <path> [--allow-external] [--force]
                                 Add a workspace to the allowlist
   unregister <path>             Remove a workspace from the allowlist
@@ -35,13 +49,19 @@ Maintenance:
   server-start [path]           Start or reuse this workspace's server
   server-stop [path]            Stop this workspace's server
   sweep                         Clean up dead and idle servers
+  notify                        Report finished jobs once (used by the Stop hook)
 `;
+
+const DELEGATE_SPEC = {
+  valueOptions: ["task", "model", "route", "role", "timeout", "dir", "budget"],
+  boolOptions: ["write", "background", "wait", "allow-dirty-tree"]
+};
 
 const COMMANDS = {
   doctor: () => {
-    const result = doctor();
-    process.stdout.write(`${result.text}\n`);
-    return result.failures > 0 ? 1 : 0;
+    const outcome = doctor();
+    process.stdout.write(`${outcome.text}\n`);
+    return outcome.failures > 0 ? 1 : 0;
   },
 
   routes: (argv) => {
@@ -94,6 +114,68 @@ const COMMANDS = {
   sweep: async () => {
     process.stdout.write(`${await sweepServers()}\n`);
     return 0;
+  },
+
+  delegate: async (argv) => {
+    const { options, positionals } = parseArgs(argv, DELEGATE_SPEC);
+
+    // The task can come from --task or from whatever is left over, so a long
+    // handoff after `--` does not have to be quoted twice.
+    const task = options.task ?? positionals.join(" ");
+
+    process.stdout.write(
+      `${await delegate({
+        task,
+        model: options.model ?? "kimi",
+        route: options.route ?? "standard",
+        role: options.role ?? "builder",
+        write: Boolean(options.write),
+        directory: options.dir,
+        wait: !options.background,
+        timeoutSeconds: options.timeout ? Number(options.timeout) : undefined,
+        budgetSeconds: options.budget ? Number(options.budget) : undefined,
+        allowDirtyTree: Boolean(options["allow-dirty-tree"])
+      })}\n`
+    );
+    return 0;
+  },
+
+  status: (argv) => {
+    const { positionals } = parseArgs(argv, {});
+    process.stdout.write(`${status(positionals[0])}\n`);
+    return 0;
+  },
+
+  result: async (argv) => {
+    const { positionals } = parseArgs(argv, {});
+    process.stdout.write(`${await result(positionals[0])}\n`);
+    return 0;
+  },
+
+  permit: async (argv) => {
+    const { positionals } = parseArgs(argv, {});
+    process.stdout.write(`${await permit(positionals[0], positionals[1], positionals[2])}\n`);
+    return 0;
+  },
+
+  cancel: async (argv) => {
+    const { positionals } = parseArgs(argv, {});
+    process.stdout.write(`${await cancel(positionals[0])}\n`);
+    return 0;
+  },
+
+  revert: (argv) => {
+    const { positionals } = parseArgs(argv, {});
+    process.stdout.write(`${revert(positionals[0])}\n`);
+    return 0;
+  },
+
+  notify: async () => {
+    const text = await notify();
+    if (text) {
+      process.stdout.write(`${text}\n`);
+    }
+    return 0;
   }
 };
 
@@ -107,7 +189,7 @@ async function main() {
 
   const command = COMMANDS[name];
   if (!command) {
-    process.stderr.write(fail(`Unknown command "${name}".`, USAGE) + "\n");
+    process.stderr.write(`${fail(`Unknown command "${name}".`, USAGE)}\n`);
     return 2;
   }
 

@@ -29,11 +29,16 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { isAlive, processCommandLine, terminateProcessTree } from "./process.mjs";
+import { credentialEnv } from "./credentials.mjs";
 import { opencodeBinary, OpencodeError } from "./opencode.mjs";
-import { readJsonIfPresent, workspaceStateDir } from "./state.mjs";
+import { readJsonIfPresent, stateRoot, workspaceStateDir } from "./state.mjs";
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 export const IDLE_TTL_MS = 15 * 60 * 1000;
 const START_TIMEOUT_MS = 45_000;
@@ -123,6 +128,72 @@ function claimStart(slug, workspaceRoot) {
   }
 
   return false;
+}
+
+/**
+ * Build a plugin-owned OpenCode config directory and return its path.
+ *
+ * The mechanism matters here. `OPENCODE_CONFIG_CONTENT` and `OPENCODE_CONFIG`
+ * are both ignored by OpenCode 1.18.16; the one that works is
+ * `OPENCODE_CONFIG_DIR`, verified by reading `/config` back off a running
+ * server. But it *replaces* the user's config rather than merging with it, so
+ * anything they had set would silently stop applying to our servers.
+ *
+ * The fix is to do the merge here: read their global config, layer our agents
+ * and depth limit on top, and write the result to a directory we own. Their
+ * files are never modified, and their settings keep working. Credentials are
+ * unaffected either way, since auth lives outside the config directory.
+ */
+export function pluginConfigDir() {
+  const file = path.resolve(HERE, "..", "..", "config", "opencode-agents.json");
+  const ours = JSON.parse(fs.readFileSync(file, "utf8"));
+  const theirs = readUserOpencodeConfig();
+
+  const merged = {
+    ...theirs,
+    ...ours,
+    // Their agents survive; ours win on a name collision, because a workspace
+    // pointed at "external-builder" must get the permissions we defined.
+    agent: { ...(theirs.agent ?? {}), ...(ours.agent ?? {}) }
+  };
+
+  const dir = path.join(stateRoot(), "opencode-config");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "opencode.json"), `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  return dir;
+}
+
+/**
+ * The user's own global OpenCode config, if any. Comments are stripped because
+ * the file is conventionally .jsonc and JSON.parse will not tolerate them.
+ */
+function readUserOpencodeConfig() {
+  const candidates = [
+    path.join(os.homedir(), ".config", "opencode", "opencode.jsonc"),
+    path.join(os.homedir(), ".config", "opencode", "opencode.json")
+  ];
+
+  for (const candidate of candidates) {
+    if (!fs.existsSync(candidate)) {
+      continue;
+    }
+    try {
+      const raw = fs
+        .readFileSync(candidate, "utf8")
+        .replace(/^\s*\/\/.*$/gm, "")
+        .replace(/\/\*[\s\S]*?\*\//g, "");
+      const parsed = JSON.parse(raw);
+      // Their $schema would point our generated file at the wrong thing.
+      delete parsed.$schema;
+      return parsed;
+    } catch {
+      // A config we cannot parse is not a reason to refuse to start. Ours
+      // still applies; theirs is skipped, and doctor is where that shows up.
+      return {};
+    }
+  }
+
+  return {};
 }
 
 /** Ask the OS for a free port by binding to 0 and immediately releasing it. */
@@ -250,7 +321,15 @@ async function startServer(workspace) {
   fs.writeFileSync(log, "", "utf8");
   const out = fs.openSync(log, "a");
 
-  const childEnv = { ...process.env, OPENCODE_SERVER_PASSWORD: password };
+  const childEnv = {
+    ...process.env,
+    // Provider keys. Without these the server resolves only the free tier and
+    // every paid model fails with ModelUnavailableError. See credentials.mjs.
+    ...credentialEnv(),
+    OPENCODE_SERVER_PASSWORD: password,
+    // Points at a directory we generate and own. See pluginConfigDir.
+    OPENCODE_CONFIG_DIR: pluginConfigDir()
+  };
   // Do not let another plugin's exported value follow us in. Deleting the key
   // is not the same as setting it to undefined, which Node would pass through
   // as the literal string "undefined".
@@ -358,6 +437,19 @@ export async function stopServer(workspace, { reason = "requested" } = {}) {
 
   clearLock(slug);
   return { stopped: false, reason: "cleared a partial start record" };
+}
+
+/**
+ * The running server record, or null.
+ *
+ * Reading a result must not resurrect a server that was swept while the job
+ * was finishing, so this looks without starting anything. Callers that find
+ * null report what they stored rather than pretending the session is still
+ * reachable.
+ */
+export function currentServer(workspace) {
+  const record = readLock(workspace.slug);
+  return record?.status === "running" && isAlive(record.pid) ? record : null;
 }
 
 export function serverStatus(workspace) {

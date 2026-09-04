@@ -1,0 +1,105 @@
+{
+  "subagent_depth": 1,
+  "agent": {
+    "external-builder": {
+      "description": "Primary external worker with write access inside one repository.",
+      "mode": "primary",
+      "permission": {
+        "read": "allow",
+        "list": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "lsp": "allow",
+        "edit": "allow",
+        "task": "allow",
+        "external_directory": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "bash": {
+          "git status*": "allow",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "git show*": "allow",
+          "git ls-files*": "allow",
+          "ls*": "allow",
+          "cat*": "allow",
+          "rg*": "allow",
+          "find*": "allow",
+          "git push*": "deny",
+          "git reset --hard*": "deny",
+          "git clean*": "deny",
+          "git checkout*": "deny",
+          "git restore*": "deny",
+          "git rebase*": "deny",
+          "git filter-branch*": "deny",
+          "gh *": "deny",
+          "curl*": "deny",
+          "wget*": "deny",
+          "ssh*": "deny",
+          "scp*": "deny",
+          "npm publish*": "deny",
+          "kill*": "deny",
+          "taskkill*": "deny",
+          "shutdown*": "deny",
+          "*": "ask"
+        }
+      }
+    },
+
+    "external-researcher": {
+      "description": "Read-only external worker. Investigates and reports, never edits.",
+      "mode": "primary",
+      "permission": {
+        "read": "allow",
+        "list": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "lsp": "allow",
+        "edit": "deny",
+        "task": "deny",
+        "external_directory": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "bash": {
+          "git status*": "allow",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "git show*": "allow",
+          "git ls-files*": "allow",
+          "ls*": "allow",
+          "cat*": "allow",
+          "rg*": "allow",
+          "find*": "allow",
+          "*": "ask"
+        }
+      }
+    },
+
+    "glm-explore": {
+      "description": "Cheap read-only child agent for lookups, searches and dependency tracing.",
+      "mode": "subagent",
+      "permission": {
+        "read": "allow",
+        "list": "allow",
+        "glob": "allow",
+        "grep": "allow",
+        "lsp": "allow",
+        "edit": "deny",
+        "task": "deny",
+        "external_directory": "deny",
+        "webfetch": "deny",
+        "websearch": "deny",
+        "bash": {
+          "git log*": "allow",
+          "git show*": "allow",
+          "git ls-files*": "allow",
+          "ls*": "allow",
+          "cat*": "allow",
+          "rg*": "allow",
+          "find*": "allow",
+          "*": "deny"
+        }
+      }
+    }
+  }
+}

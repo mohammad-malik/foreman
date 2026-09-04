@@ -9,3 +9,6 @@ state/
 *.pid
 *.lock
 *.endpoint
+
+# Generated OpenAPI reference dumps
+.oc-doc.json

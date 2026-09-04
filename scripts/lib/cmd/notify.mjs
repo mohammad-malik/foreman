@@ -1,0 +1,73 @@
+/**
+ * What the Stop hook prints.
+ *
+ * This is the answer to the awkward question in an asynchronous design: when a
+ * background job finishes, who tells you? Polling in a loop burns turns and
+ * makes the conversation useless while it waits. Instead the Stop hook runs at
+ * each turn boundary and reports anything that has landed since the last one.
+ *
+ * Each job is announced exactly once. Being told three times that the same job
+ * finished would be worse than not being told at all, so a reported timestamp
+ * is written as soon as it is mentioned.
+ */
+
+import { listWorkspaces } from "../registry.mjs";
+import { hasActiveJobs, markReported, unreportedJobs } from "../jobs.mjs";
+import { sweep } from "../servers.mjs";
+import { collectResult } from "./result.mjs";
+
+export async function notify() {
+  const workspaces = listWorkspaces();
+  if (workspaces.length === 0) {
+    return "";
+  }
+
+  // The hook fires often, which makes it the natural place to run the cleanup
+  // that no resident process is left alive to do.
+  await sweep(workspaces, { hasRunningJobs: hasActiveJobs }).catch(() => []);
+
+  const pending = unreportedJobs(workspaces);
+  if (pending.length === 0) {
+    return "";
+  }
+
+  const lines = [];
+
+  for (const job of pending) {
+    let current = job;
+
+    // Refresh before announcing, so a job that finished while nobody was
+    // looking is reported with its real outcome rather than its last guess.
+    try {
+      current = await collectResult(job.slug, job.id);
+    } catch {
+      // Report what we have.
+    }
+
+    if (current.status === "awaiting_permission") {
+      const requests = current.result?.pendingPermissions ?? [];
+      const first = requests[0];
+      lines.push(
+        `external-agents: job ${current.id} (${current.qualified ?? current.alias}) is waiting for permission` +
+          (first ? ` to ${first.action}` : "") +
+          `. Answer with /external-agents:permit ${current.id} ${first?.id ?? "<request-id>"} allow|reject`
+      );
+      // Deliberately not marked reported: it is still blocked, and it should
+      // keep asking until someone answers.
+      continue;
+    }
+
+    const changed = current.changes?.changed?.length ?? 0;
+    const summary =
+      current.status === "completed"
+        ? `finished, ${changed} file(s) changed`
+        : `${current.status}${current.error ? `: ${current.error}` : ""}`;
+
+    lines.push(
+      `external-agents: job ${current.id} (${current.qualified ?? current.alias}) ${summary}. See it with /external-agents:result ${current.id}`
+    );
+    markReported(current);
+  }
+
+  return lines.join("\n");
+}
