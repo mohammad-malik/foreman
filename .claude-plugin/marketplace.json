@@ -9,5 +9,6 @@
       "source": "./",
       "description": "Delegate a task to a non-Claude model through OpenCode, then verify the result against git."
     }
-  ]
+  ],
+  "description": "Personal marketplace hosting the external-agents plugin."
 }

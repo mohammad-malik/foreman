@@ -335,11 +335,19 @@ async function startServer(workspace) {
   // as the literal string "undefined".
   delete childEnv.CLAUDE_PLUGIN_DATA;
 
+  // Deliberately NOT the repository. The OpenCode server drops native module
+  // temp files (.<hex>-00000000.node) into its working directory, which would
+  // leave every registered repo permanently dirty and break change
+  // attribution. Sessions carry their own `location.directory`, so the server
+  // does not need to sit in the repo to work on it.
+  const scratch = path.join(stateRoot(), "server-cwd");
+  fs.mkdirSync(scratch, { recursive: true });
+
   const child = spawn(
     opencodeBinary(),
     ["serve", "--port", String(port), "--hostname", "127.0.0.1"],
     {
-      cwd: root,
+      cwd: scratch,
       detached: true,
       windowsHide: true,
       stdio: ["ignore", out, out],

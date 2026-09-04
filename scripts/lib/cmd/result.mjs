@@ -97,7 +97,14 @@ export async function collectResult(slug, jobID) {
   }
 
   let changes = job.changes ?? null;
-  if (job.baseline) {
+
+  // Once a job is finished its change set is frozen. Recomputing later would
+  // report the state of the tree now, not what the job did: revert a job and
+  // it would retroactively claim to have changed nothing, which is exactly
+  // backwards.
+  const settled = job.finishedAt && changes;
+
+  if (job.baseline && !settled) {
     try {
       const diff = diffAgainstBaseline(job.baseline);
       changes = {

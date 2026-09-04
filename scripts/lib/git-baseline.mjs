@@ -18,6 +18,25 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+/**
+ * Files OpenCode itself drops into the directory it is working in.
+ *
+ * These are bun native-module temp files, named like
+ * `.fef7ffcf7b57e7fe-00000000.node`. They appear in any repository a session
+ * touches, and they are not the agent's work. Counting them would attribute
+ * junk to the model and, worse, leave every repository permanently dirty so
+ * the next write delegation is refused for no real reason.
+ *
+ * The pattern is deliberately narrow: a dot, hex, a dash, eight digits, and
+ * the .node suffix, at the top level only. A real file someone meant to keep
+ * will not match it.
+ */
+const RUNTIME_ARTIFACT = /^\.[0-9a-f]{8,}-\d{8}\.node$/;
+
+export function isRuntimeArtifact(filePath) {
+  return RUNTIME_ARTIFACT.test(filePath);
+}
+
 export class GitError extends Error {
   constructor(message) {
     super(message);
@@ -84,7 +103,9 @@ function parseStatusZ(raw) {
     entries.push({ code, path: filePath });
   }
 
-  return entries;
+  // Dropped before anything else looks at the list, so neither the dirty check
+  // nor the change set ever sees OpenCode's own leftovers.
+  return entries.filter((entry) => !isRuntimeArtifact(entry.path));
 }
 
 function hashFile(absolutePath) {
