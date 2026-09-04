@@ -186,3 +186,45 @@ test("sweep ignores a workspace with no server at all", async () => {
   clearLock();
   assert.deepEqual(await sweep([WORKSPACE]), []);
 });
+
+test("the sweep spares a server by default, so a forgotten guard cannot destroy work", async () => {
+  // sweepServers omitted the hasRunningJobs option, so the manual sweep used
+  // the old default of () => false and reaped every idle server regardless of
+  // active jobs. Running the test suite, which executes `sweep`, killed the
+  // server under a live background delegation and lost 40 minutes of work.
+  // The default now spares: forgetting the guard fails to clean up, which is
+  // recoverable, instead of destroying a running job, which is not.
+  const stale = new Date(Date.now() - IDLE_TTL_MS * 2).toISOString();
+  writeLock({
+    status: "running",
+    pid: process.pid,
+    url: "http://127.0.0.1:9",
+    startedAt: stale,
+    lastActivityAt: stale
+  });
+
+  const actions = await sweep([WORKSPACE], { isOurServer: () => true });
+
+  assert.deepEqual(actions, [], "no guard supplied means spare it, not reap it");
+  assert.equal(serverStatus(WORKSPACE).state, "running");
+  clearLock();
+});
+
+test("an explicit guard still reaps an idle server with no work", async () => {
+  const stale = new Date(Date.now() - IDLE_TTL_MS * 2).toISOString();
+  writeLock({
+    status: "running",
+    pid: 999_999_21,
+    url: "http://127.0.0.1:9",
+    startedAt: stale,
+    lastActivityAt: stale
+  });
+
+  const actions = await sweep([WORKSPACE], {
+    hasRunningJobs: () => false,
+    isOurServer: () => true
+  });
+
+  assert.equal(actions.length, 1);
+  assert.match(actions[0].action, /stopped idle server/);
+});

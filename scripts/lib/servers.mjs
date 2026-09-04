@@ -500,7 +500,10 @@ export function serverStatus(workspace) {
  */
 export async function sweep(
   workspaces,
-  { hasRunningJobs = () => false, isOurServer = looksLikeOurServer } = {}
+  // Defaults to sparing a server, not reaping it. A caller that forgets the
+  // guard should fail to clean up, never destroy a running job: that mistake
+  // in sweepServers killed a live delegation.
+  { hasRunningJobs = () => true, isOurServer = looksLikeOurServer } = {}
 ) {
   const actions = [];
 

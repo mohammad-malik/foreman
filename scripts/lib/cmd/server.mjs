@@ -8,6 +8,7 @@
 
 import { listWorkspaces, requireWorkspaceFor } from "../registry.mjs";
 import { acquireServer, IDLE_TTL_MS, serverStatus, stopServer, sweep } from "../servers.mjs";
+import { hasActiveJobs } from "../jobs.mjs";
 import { bullet, heading, keyValue } from "../render.mjs";
 
 function describeIdle(ms) {
@@ -78,7 +79,11 @@ export function servers() {
 }
 
 export async function sweepServers() {
-  const actions = await sweep(listWorkspaces());
+  // The guard is not optional. Without it this killed the server out from
+  // under a live background delegation: every other caller passes
+  // hasActiveJobs, this one did not, and running the test suite (which
+  // executes `sweep`) destroyed 40 minutes of work.
+  const actions = await sweep(listWorkspaces(), { hasRunningJobs: hasActiveJobs });
 
   if (actions.length === 0) {
     return "Sweep found nothing to clean up.";
