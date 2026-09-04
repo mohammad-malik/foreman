@@ -389,3 +389,52 @@ test("a long filename can still be restored", () => {
   assert.deepEqual(outcome.skipped, [], "a long name must not defeat restore");
   assert.equal(fs.readFileSync(file, "utf8"), "mine\n");
 });
+
+test("git is not consulted for snapshots that already record a mode", () => {
+  // The mode lookup costs a git subprocess per file. Evaluating it eagerly
+  // turned a large dirty-tree revert into one `git ls-tree` per path, even on
+  // Windows where the result is discarded. A resolver that throws proves it is
+  // never reached for a modern snapshot.
+  const { root } = makeRepo();
+  for (let i = 0; i < 5; i += 1) {
+    fs.writeFileSync(path.join(root, `f${i}.txt`), `mine ${i}\n`);
+  }
+
+  const baseline = captureBaseline(root);
+  for (let i = 0; i < 5; i += 1) {
+    fs.writeFileSync(path.join(root, `f${i}.txt`), `agent ${i}\n`);
+  }
+
+  const diff = diffAgainstBaseline(baseline);
+  const outcome = revertPaths(root, baseline, diff.changed, {
+    resolveLegacyMode: () => {
+      throw new Error("the legacy mode lookup must not run for a modern snapshot");
+    }
+  });
+
+  assert.equal(outcome.restored.length, 5);
+  assert.equal(fs.readFileSync(path.join(root, "f0.txt"), "utf8"), "mine 0\n");
+});
+
+test("git IS consulted when a legacy snapshot has no mode", { skip: process.platform === "win32" }, () => {
+  const { root } = makeRepo();
+  const file = path.join(root, "legacy.txt");
+  fs.writeFileSync(file, "mine\n");
+
+  const baseline = captureBaseline(root);
+  baseline.contents["legacy.txt"] = fs.readFileSync(file).toString("base64");
+
+  fs.writeFileSync(file, "agent edit\n");
+
+  let consulted = 0;
+  const diff = diffAgainstBaseline(baseline);
+  revertPaths(root, baseline, diff.changed, {
+    resolveLegacyMode: () => {
+      consulted += 1;
+      return 0o644;
+    }
+  });
+
+  assert.equal(consulted, 1, "a legacy snapshot has no recorded mode, so git is the fallback");
+  assert.equal(fs.readFileSync(file, "utf8"), "mine\n");
+});

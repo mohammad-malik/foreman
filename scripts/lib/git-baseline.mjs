@@ -334,7 +334,7 @@ function decodeSnapshot(stored) {
  * reapplied anyway so an executable bit survives even when the file had to be
  * created fresh.
  */
-function writeSnapshot(absolute, replacement, { legacyMode = null } = {}) {
+function writeSnapshot(absolute, replacement, { resolveLegacyMode = () => null } = {}) {
   fs.mkdirSync(path.dirname(absolute), { recursive: true });
 
   let current = null;
@@ -380,9 +380,13 @@ function writeSnapshot(absolute, replacement, { legacyMode = null } = {}) {
   // `chmod 777` or `chmod 000` would be preserved as though it were original.
   // Legacy records predate the mode field, so the answer there is 0600 unless
   // git can supply the real pre-job mode.
+  // Resolved lazily. Looking up git's recorded mode costs a subprocess per
+  // file, and it is needed only for a legacy snapshot on POSIX. Computing it
+  // eagerly turned a large dirty-tree revert into one `git ls-tree` per path,
+  // including on Windows where the result is discarded.
   let mode = null;
   if (process.platform !== "win32") {
-    mode = replacement.mode !== null ? replacement.mode & 0o777 : (legacyMode ?? 0o600);
+    mode = replacement.mode !== null ? replacement.mode & 0o777 : (resolveLegacyMode() ?? 0o600);
   }
 
   try {
@@ -486,7 +490,7 @@ export function diffStat(root, paths) {
  * and files the agent created are deleted. Anything the agent did not touch is
  * left alone, so this can never turn into an accidental `git reset --hard`.
  */
-export function revertPaths(root, baseline, changed) {
+export function revertPaths(root, baseline, changed, { resolveLegacyMode = gitRecordedMode } = {}) {
   const restored = [];
   const removed = [];
   const skipped = [];
@@ -528,7 +532,7 @@ export function revertPaths(root, baseline, changed) {
 
       try {
         writeSnapshot(absolute, replacement, {
-          legacyMode: gitRecordedMode(root, baseline, entry.path)
+          resolveLegacyMode: () => resolveLegacyMode(root, baseline, entry.path)
         });
         restoreIndexState(root, baseline, entry.path);
         restored.push(entry.path);
