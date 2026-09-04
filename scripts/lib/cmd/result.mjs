@@ -32,7 +32,9 @@ function workspaceFor(slug) {
  * already collected stays in the record.
  */
 export async function collectResult(slug, jobID, { timeout } = {}) {
-  const job = loadJob(slug, jobID);
+  // Reassigned below when the job is stamped as awaiting a permission, so the
+  // rest of this function works from the updated record rather than a stale one.
+  let job = loadJob(slug, jobID);
   if (!job) {
     throw new Error(`No job ${jobID} in this workspace.`);
   }
