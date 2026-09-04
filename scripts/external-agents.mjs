@@ -58,6 +58,20 @@ const DELEGATE_SPEC = {
   boolOptions: ["write", "background", "wait", "allow-dirty-tree"]
 };
 
+/**
+ * Reassemble a path from the positional arguments.
+ *
+ * Splitting the argument string is unavoidable, because a slash command must
+ * quote `$ARGUMENTS` to keep a Windows path's backslashes and that delivers
+ * everything as one entry. But splitting then breaks a path containing a
+ * space, and `C:\Program Files\repo` is not an exotic input. Rejoining the
+ * non-flag positionals restores it, so the common case works unquoted and
+ * quoting is merely also supported.
+ */
+function pathArg(positionals) {
+  return positionals.length === 0 ? undefined : positionals.join(" ");
+}
+
 const COMMANDS = {
   doctor: () => {
     const outcome = doctor();
@@ -81,7 +95,7 @@ const COMMANDS = {
       boolOptions: ["allow-external", "force"]
     });
     process.stdout.write(
-      `${register(positionals[0], {
+      `${register(pathArg(positionals), {
         allowExternal: Boolean(options["allow-external"]),
         force: Boolean(options.force)
       })}\n`
@@ -91,7 +105,7 @@ const COMMANDS = {
 
   unregister: (argv) => {
     const { positionals } = parseArgs(argv, {});
-    process.stdout.write(`${unregister(positionals[0])}\n`);
+    process.stdout.write(`${unregister(pathArg(positionals))}\n`);
     return 0;
   },
 
@@ -102,13 +116,13 @@ const COMMANDS = {
 
   "server-start": async (argv) => {
     const { positionals } = parseArgs(argv, {});
-    process.stdout.write(`${await serverStart(positionals[0])}\n`);
+    process.stdout.write(`${await serverStart(pathArg(positionals))}\n`);
     return 0;
   },
 
   "server-stop": async (argv) => {
     const { positionals } = parseArgs(argv, {});
-    process.stdout.write(`${await serverStop(positionals[0])}\n`);
+    process.stdout.write(`${await serverStop(pathArg(positionals))}\n`);
     return 0;
   },
 
