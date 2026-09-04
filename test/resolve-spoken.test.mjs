@@ -73,13 +73,62 @@ test("gpt 5.6 sol resolves to sol, and not to astra", () => {
   for (const phrase of ["sol", "gpt 5.6 sol", "gpt-5.6-sol", "gpt5.6 sol"]) {
     const match = resolveSpoken(phrase);
     assert.equal(match.alias, "sol", phrase);
-    assert.equal(match.qualified, "opencode/gpt-5.6-sol", phrase);
+    // Codex, because that is sol's default backend: it runs on a ChatGPT
+    // sign-in rather than a metered API key.
+    assert.equal(match.backend, "codex", phrase);
+    assert.equal(match.qualified, "codex/gpt-5.6-sol", phrase);
+    assert.equal(match.defaultedBackend, true, phrase);
   }
 });
 
+test("luna resolves, and defaults to codex like sol", () => {
+  for (const phrase of ["luna", "gpt 5.6 luna", "gpt-5.6-luna", "moon"]) {
+    const match = resolveSpoken(phrase);
+    assert.equal(match.alias, "luna", phrase);
+    assert.equal(match.qualified, "codex/gpt-5.6-luna", phrase);
+  }
+});
+
+test("saying a backend out loud overrides the model's default", () => {
+  // The point of the override: the same model, billed a different way.
+  for (const phrase of ["opencode sol", "via opencode luna", "open code sol"]) {
+    const match = resolveSpoken(phrase);
+    assert.equal(match.backend, "opencode", phrase);
+    assert.equal(match.requestedBackend, "opencode", phrase);
+    assert.equal(match.defaultedBackend, false, phrase);
+    assert.match(match.qualified, /^opencode\//, phrase);
+  }
+
+  const explicit = resolveSpoken("codex sol");
+  assert.equal(explicit.backend, "codex");
+  assert.equal(explicit.defaultedBackend, false);
+});
+
+test("a backend a model does not run on refuses rather than falling back", () => {
+  // Kimi is not an OpenAI model, so there is no codex path to quietly take.
+  assert.throws(
+    () => resolveSpoken("codex kimi"),
+    (error) => {
+      assert.equal(error.code, "spoken_backend_unavailable");
+      assert.match(error.message, /does not run on codex/);
+      return true;
+    }
+  );
+});
+
+test("a backend named with no model refuses instead of picking one", () => {
+  assert.throws(
+    () => resolveSpoken("codex"),
+    (error) => {
+      assert.equal(error.code, "spoken_backend_only");
+      return true;
+    }
+  );
+});
+
 test("a model with one route gets it, and says the route was substituted", () => {
-  // sol is standard-only. Asking for fast yields standard rather than an
-  // error, but the substitution is reported rather than hidden.
+  // sol is standard-only on both backends. Asking for fast yields standard
+  // rather than an error, but the substitution is reported rather than hidden.
   const match = resolveSpoken("fast sol");
   assert.equal(match.alias, "sol");
   assert.equal(match.route, "standard");
@@ -92,8 +141,16 @@ test("astra resolves by itself once its id appears upstream", () => {
   // the day it lands.
   assert.throws(() => resolveSpoken("gpt-6-astra", ["opencode/kimi-k3"]), /reserved/);
 
-  const match = resolveSpoken("gpt-6-astra", ["opencode/kimi-k3", "opencode/gpt-6-astra"]);
+  // Promoted on whichever backend actually offers it. Codex is astra's
+  // default, so a codex id promotes to the default path.
+  const viaCodex = resolveSpoken("gpt-6-astra", { codex: ["gpt-6-astra"] });
+  assert.equal(viaCodex.alias, "astra");
+  assert.equal(viaCodex.backend, "codex");
+  assert.equal(viaCodex.qualified, "codex/gpt-6-astra");
+
+  const match = resolveSpoken("gpt-6-astra", { opencode: ["opencode/gpt-6-astra"] });
   assert.equal(match.alias, "astra");
+  assert.equal(match.backend, "opencode");
   assert.equal(match.qualified, "opencode/gpt-6-astra");
 });
 

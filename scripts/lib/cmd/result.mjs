@@ -15,9 +15,17 @@
  */
 
 import { diffAgainstBaseline, diffStat } from "../git-baseline.mjs";
+import { judgeCodexJob, readCodexJob } from "../codex-job.mjs";
 import { finalAssistantText, OpencodeApi, toolCalls, usageTotals } from "../opencode-api.mjs";
 import { currentServer, touch } from "../servers.mjs";
-import { describeElapsed, loadJob, markAwaiting, markPolled, updateJob } from "../jobs.mjs";
+import {
+  describeElapsed,
+  loadJob,
+  markAwaiting,
+  markPolled,
+  TERMINAL_STATUSES,
+  updateJob
+} from "../jobs.mjs";
 import { listWorkspaces } from "../registry.mjs";
 import { bullet, heading, keyValue, untrustedBlock } from "../render.mjs";
 
@@ -37,6 +45,10 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
   let job = loadJob(slug, jobID);
   if (!job) {
     throw new Error(`No job ${jobID} in this workspace.`);
+  }
+
+  if (job.backend === "codex") {
+    return collectCodexResult(job);
   }
 
   const workspace = workspaceFor(slug);
@@ -160,6 +172,61 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
   return updateJob(job, { status, finishedAt, result: collected, changes });
 }
 
+/**
+ * Bring a Codex job up to date.
+ *
+ * Everything is read off disk, so this works while the job runs, after it
+ * exits, and after a reboot. There is no server to be gone and no session to
+ * expire: the event log either has the run in it or it does not.
+ */
+function collectCodexResult(job) {
+  const state = readCodexJob(job);
+  const judged = judgeCodexJob(job, state);
+
+  const collected = {
+    finalText: state.finalText ?? job.result?.finalText ?? null,
+    children: [],
+    tools: state.parsed.tools,
+    cost: null,
+    tokens: state.parsed.tokens ?? job.result?.tokens ?? null,
+    threadID: state.parsed.threadID ?? job.result?.threadID ?? null,
+    pendingPermissions: [],
+    warnings: []
+  };
+
+  if (state.stderr) {
+    collected.warnings.push(`codex wrote to stderr: ${state.stderr.slice(0, 500)}`);
+  }
+
+  // A job the user already cancelled, or one reconciliation already failed,
+  // keeps that verdict. Only a still-active record takes the process's word.
+  const status = TERMINAL_STATUSES.has(job.status) ? job.status : judged.status;
+  const isTerminal = TERMINAL_STATUSES.has(status);
+
+  let changes = job.changes ?? null;
+  const settled = job.finishedAt && changes;
+
+  if (job.baseline && !settled) {
+    try {
+      const diff = diffAgainstBaseline(job.baseline);
+      changes = {
+        ...diff,
+        stat: diffStat(job.workspaceRoot, diff.changed.map((entry) => entry.path))
+      };
+    } catch (error) {
+      collected.warnings.push(`Could not compute the change set: ${error.message}`);
+    }
+  }
+
+  return updateJob(job, {
+    status,
+    finishedAt: isTerminal ? (job.finishedAt ?? new Date().toISOString()) : null,
+    error: job.error ?? judged.error,
+    result: collected,
+    changes
+  });
+}
+
 export function renderResult(job) {
   const lines = [];
 
@@ -169,7 +236,14 @@ export function renderResult(job) {
       ["model", job.qualified ?? `${job.alias}.${job.route}`],
       ["agent", `${job.agent} (${job.access})`],
       ["workspace", job.workspaceRoot],
-      ["session", job.sessionID ?? "none"],
+      ...(job.backend === "codex"
+        ? [
+            ["sandbox", job.sandbox ?? "unknown"],
+            // The thread id is what `codex resume` takes, so it is the one
+            // handle worth printing: the whole run can be reopened with it.
+            ["thread", job.result?.threadID ?? "not started"]
+          ]
+        : [["session", job.sessionID ?? "none"]]),
       ["elapsed", describeElapsed(job)],
       ...(job.result?.cost != null ? [["cost", `$${Number(job.result.cost).toFixed(4)}`]] : []),
       ...(job.result?.tokens

@@ -16,6 +16,7 @@
  * possibly still be running, never merely because it is slow.
  */
 
+import { judgeCodexJob, readCodexJob } from "./codex-job.mjs";
 import { ACTIVE_STATUSES, elapsedMs, listJobs, updateJob } from "./jobs.mjs";
 import { currentServer } from "./servers.mjs";
 
@@ -46,6 +47,24 @@ export function reconcileWorkspace(workspace) {
           error: `Exceeded its ${Math.round(budget / 60000)} minute budget. Any edits it had already written are still on disk.`
         })
       );
+      continue;
+    }
+
+    // A Codex job has no server to lose. Its process either exists or it does
+    // not, and once it is gone the event log is the whole story, so this is
+    // where a background Codex job reaches a terminal state.
+    if (job.backend === "codex") {
+      const state = readCodexJob(job);
+      if (!state.alive) {
+        const judged = judgeCodexJob(job, state);
+        changed.push(
+          updateJob(job, {
+            status: judged.status,
+            finishedAt: new Date().toISOString(),
+            error: judged.error
+          })
+        );
+      }
       continue;
     }
 

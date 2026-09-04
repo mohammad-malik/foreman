@@ -22,10 +22,11 @@ Do not map a spoken name yourself, and do not assume which models exist. Ask:
 RUNTIME resolve <what the user said>
 ```
 
-Pass their words through: `resolve fast glm 5.3`, `resolve moonshot`,
-`resolve gpt-6-astra`. It returns JSON with `model` and `route`, or `ok: false`
-with the available list. Speed words are handled for you, so "fast kimi",
-"quick kimi" and "cheapest glm" all resolve without special casing.
+Pass their words through: `resolve fast kimi`, `resolve moonshot`,
+`resolve opencode sol`. It returns JSON with `model`, `backend` and `route`, or
+`ok: false` with the available list. Speed words and backend words are handled
+for you, so "fast kimi", "cheapest glm" and "opencode sol" all resolve without
+special casing.
 
 If it refuses, show the user the message and the available models, and stop.
 Never substitute a different model because the one they named is unavailable —
@@ -39,6 +40,28 @@ one implied. Say so in your report.
 does. Show the message and stop. Do not reach for the model next to it: the
 whole reason that name refuses is that resolving it to a neighbour would run
 something the user did not ask for.
+
+## Two backends, and why it matters which one runs
+
+`resolve` also returns a `backend`, and it is not cosmetic. `codex` runs the job
+through the Codex CLI on the user's ChatGPT sign-in; `opencode` runs it against
+a metered provider key. Same model, different bill.
+
+Pass it through to the dispatch as `--backend <backend>`, and name it in your
+report. When `defaultedBackend` is true the user did not say which one, so it
+came from the model's own default: say which one ran anyway, in one clause, so a
+job never bills a way they did not expect.
+
+Backend differences worth knowing before you write a handoff:
+
+- A Codex job has no permission prompts. What it may touch is set by a sandbox
+  before it starts: read-only, or write inside the workspace. Nothing will
+  block waiting for the user, so a handoff that says "ask me before X" will not
+  be honoured on that backend.
+- A Codex researcher CAN run commands, inside a read-only sandbox, so it can
+  run `git diff` itself. An OpenCode researcher cannot: its bash is denied
+  outright. That changes how you write a review handoff, see below.
+- `--unattended` is refused on Codex. It has nothing to unattend.
 
 ## One handoff per task
 
@@ -113,10 +136,17 @@ A job that did not reach `completed` did not do the work. Say which, and why.
 
 ## A follow-up review
 
-"When everything is done, run a codex review" means: wait for every job, report,
-and only then run the reviewer. It is a separate step with a separate tool, and
-per the user's standing instruction it is invoked as the script, never the slash
-command:
+**"Run a codex review" is never a delegation.** It means the Codex plugin's own
+reviewer, and it always has. This plugin now has a backend that also shells out
+to Codex, and that changes nothing here: a review request is not a job, it does
+not go through `delegate`, and it does not appear in `status`. Saying "codex" as
+a backend word only ever selects how a model you named runs, and `resolve codex`
+refuses on its own precisely so this cannot be misread.
+
+So "when everything is done, run a codex review" means: wait for every job,
+report, and only then run the reviewer. It is a separate step with a separate
+tool, and per the user's standing instruction it is invoked as the script, never
+the slash command:
 
 ```
 node "$HOME/.claude/plugins/marketplaces/openai-codex/plugins/codex/scripts/codex-companion.mjs" review --wait --base <commit before the work>
@@ -128,9 +158,14 @@ anyway.
 
 ## Reviewing a diff
 
-An external researcher has `bash` denied, so it cannot run `git diff` — it only
-reads current files. To have a model review *changes*, extract the diff yourself
-and include it in the handoff.
+On the OpenCode backend a researcher has `bash` denied, so it cannot run
+`git diff` and only reads current files. To have one of those models review
+*changes*, extract the diff yourself and include it in the handoff.
+
+On the Codex backend a read-only sandbox still allows commands, so a Codex
+researcher can run `git diff` itself. Say which commit or range to compare
+against and let it read the diff, rather than pasting thousands of lines into
+the handoff.
 
 ## What to refuse
 

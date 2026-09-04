@@ -58,7 +58,7 @@ test("a missing route on a known alias names the routes that exist", () => {
 test("a reserved alias with no live ID fails with an explanation", () => {
   assert.throws(
     () => resolveRoute("astra", "standard", LIVE),
-    /reserved but has no live provider ID yet/
+    /reserved and has no live route yet/
   );
 });
 
@@ -71,7 +71,7 @@ test("a route whose model vanished upstream fails instead of substituting", () =
     () => resolveRoute("kimi", "standard", withoutKimi),
     (error) => {
       assert.equal(error.code, "route_unavailable");
-      assert.match(error.message, /which OpenCode does not currently list/);
+      assert.match(error.message, /does not currently list it/);
       return true;
     }
   );

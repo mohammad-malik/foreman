@@ -33,17 +33,39 @@ Long jobs take `--background` and are reported when they land.
 
 ## Models
 
-| Alias | Say | Routes |
-|---|---|---|
-| `kimi` | kimi, kimi k3, k3, moonshot | standard (Zen), fast (Fireworks router) |
-| `glm` | glm, glm 5.3, glm flash, flash, zhipu | GLM 5.3 Flash on both tiers |
-| `sol` | sol, gpt 5.6 sol, gpt 5.6 | standard (Zen) |
-| `astra` | astra, gpt-6-astra, gpt 6 | reserved for GPT-6, activates on its own |
+| Alias | Say | Backend | Routes |
+|---|---|---|---|
+| `kimi` | kimi, kimi k3, k3, moonshot | OpenCode | standard (Zen), fast (Fireworks router) |
+| `glm` | glm, glm 5.3, glm flash, flash, zhipu | OpenCode | GLM 5.3 Flash on both tiers |
+| `sol` | sol, gpt 5.6 sol, gpt 5.6 | Codex | standard |
+| `luna` | luna, gpt 5.6 luna, moon | Codex | standard |
+| `astra` | astra, gpt-6-astra, gpt 6 | Codex | reserved for GPT-6, activates on its own |
 
 Spoken names live in `config/routes.default.json`. Adding a model, or another
 way of saying one, is an edit to that file: no code knows what "kimi" means.
 Speed words are handled separately, so `fast kimi` and `cheapest glm` need no
 entries.
+
+## Two backends
+
+A model can be reachable more than one way, and the ways are not equivalent.
+
+- **Codex** shells out to `codex exec`, which runs OpenAI models on your ChatGPT
+  sign-in. One detached process per job. No permission prompts: a sandbox decides
+  what it may touch before it starts, read-only or write-inside-the-workspace.
+- **OpenCode** drives a local OpenCode server against a provider API key, with
+  per-command permission prompts you answer as they come.
+
+So `sol` and `luna` default to Codex. Say a backend out loud to override it:
+"have opencode sol review this" runs the same model against the API key instead.
+Which backend ran is recorded on the job and printed in the report, never
+inferred afterwards.
+
+Everything else is identical across backends: the same job records, the same
+git-derived change set, one `wait` that covers both, and `revert` either way.
+
+Reviews stay with the Codex plugin's own `/codex:review`. This backend is for
+delegating work, not for reviewing Claude's.
 
 A model is never substituted. If a route is unavailable you get an error naming
 the live alternatives, not a quiet downgrade to something else. Two cases go

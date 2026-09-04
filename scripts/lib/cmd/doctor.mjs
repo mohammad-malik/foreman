@@ -19,6 +19,7 @@ import {
   providersFrom,
   SUPPORTED_RANGE
 } from "../opencode.mjs";
+import { codexModels, codexSignedIn, detectCodexVersion } from "../codex.mjs";
 import { findReservedCandidates, listAliases, resolveRoute } from "../routes.mjs";
 import { listWorkspaces } from "../registry.mjs";
 import { resolveStateRoot } from "../state.mjs";
@@ -98,21 +99,58 @@ export function doctor() {
     }
   }
 
+  lines.push(heading("Codex backend"));
+
+  let codexList = null;
+  try {
+    const codex = detectCodexVersion();
+    if (codexSignedIn()) {
+      record("ok", "Codex CLI", `${codex.raw}, signed in`);
+    } else {
+      record(
+        "fail",
+        "Codex CLI",
+        `${codex.raw}, but no stored credentials. Run \`codex login\`; sol and luna cannot run without it.`
+      );
+    }
+    codexList = codexModels();
+    record(
+      codexList ? "ok" : "warn",
+      "Codex models",
+      codexList
+        ? `${codexList.length} known locally`
+        : "could not read the local model cache, so codex model ids are unverified"
+    );
+  } catch (error) {
+    record("fail", "Codex CLI", describe(error));
+  }
+
   lines.push(heading("Routes"));
 
   const models = inventory?.models ?? null;
-  // With the inventory, a reserved alias whose id has landed reports as a live
-  // route instead of as a pending one.
-  for (const alias of listAliases(models)) {
+  const inventories = {
+    ...(models ? { opencode: models } : {}),
+    ...(codexList ? { codex: codexList } : {})
+  };
+
+  // With the inventories, a reserved alias whose id has landed reports as a
+  // live route instead of as a pending one.
+  for (const alias of listAliases(inventories)) {
     if (alias.reserved && alias.routes.length === 0) {
       record("info", alias.alias, `reserved, no live provider ID yet (${alias.description})`);
       continue;
     }
 
     for (const route of alias.routes) {
-      const name = `${alias.alias}.${route.route}`;
+      // The backend is in the name when a model has more than one, because
+      // "sol.standard ok" would otherwise say nothing about which of the two
+      // ways of reaching it actually works.
+      const name =
+        alias.backends.length > 1
+          ? `${alias.alias}.${route.backend}.${route.route}${route.isDefaultBackend ? " (default)" : ""}`
+          : `${alias.alias}.${route.route}`;
       try {
-        resolveRoute(alias.alias, route.route, models);
+        resolveRoute(alias.alias, route.route, inventories, { backend: route.backend });
         record("ok", name, `${route.qualified}${alias.promoted ? "  (newly live)" : ""}`);
       } catch (error) {
         const detail = models
@@ -124,7 +162,7 @@ export function doctor() {
   }
 
   if (models) {
-    const reserved = findReservedCandidates(models);
+    const reserved = findReservedCandidates(inventories);
     for (const entry of reserved) {
       record(
         "info",

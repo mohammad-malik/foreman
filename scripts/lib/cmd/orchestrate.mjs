@@ -8,6 +8,7 @@
  */
 
 import { detectVersion, loadInventory } from "../opencode.mjs";
+import { codexModels } from "../codex.mjs";
 import { describeAvailable, resolveSpoken, SpokenNameError } from "../resolve-spoken.mjs";
 import { ACTIVE_STATUSES, describeElapsed, listJobs, loadJob } from "../jobs.mjs";
 import { listWorkspaces } from "../registry.mjs";
@@ -16,36 +17,65 @@ import { collectResult } from "./result.mjs";
 import { bullet, heading } from "../render.mjs";
 
 /**
- * Resolve a spoken model name against the live inventory.
+ * Every backend's live model list, gathered best effort.
+ *
+ * A backend that cannot be reached is left out rather than reported empty. Left
+ * out means "unverified" and resolution proceeds on the local table; reported
+ * empty would mean "offers nothing" and would refuse every model on it, which
+ * is the wrong answer when the real problem is that a cache file is missing.
+ */
+export function liveInventories() {
+  const inventories = {};
+
+  try {
+    const version = detectVersion();
+    inventories.opencode = loadInventory({ version: version.version }).models;
+  } catch {
+    // OpenCode is not installed or not answering.
+  }
+
+  const codex = codexModels();
+  if (codex) {
+    inventories.codex = codex;
+  }
+
+  return inventories;
+}
+
+/**
+ * Resolve a spoken model name against the live inventories.
  *
  * Emits JSON, because the caller is Claude assembling a delegate command and a
  * machine-readable answer removes a parsing step from the loop.
  */
 export function resolve(phrase) {
-  let inventory = null;
+  const inventories = liveInventories();
+  const verified = Object.keys(inventories);
+  const passed = verified.length > 0 ? inventories : null;
 
   try {
-    const version = detectVersion();
-    inventory = loadInventory({ version: version.version }).models;
-  } catch {
-    // Names still resolve without the live list; availability is unverified.
-  }
-
-  try {
-    const match = resolveSpoken(phrase, inventory);
+    const match = resolveSpoken(phrase, passed);
 
     return JSON.stringify(
       {
         ok: true,
         model: match.alias,
+        backend: match.backend,
         route: match.route,
         qualified: match.qualified,
+        providerID: match.providerID,
+        modelID: match.modelID,
         matchedOn: match.matchedOn,
         // Flagged rather than hidden: a model with one route gets that route
         // even when another was asked for, and the caller should say so.
         substitutedRoute: match.substitutedRoute,
         requestedRoute: match.requestedRoute,
-        verifiedAgainstInventory: Boolean(inventory)
+        // Which backend runs it was not stated out loud, so it came from the
+        // model's own default. That decides whether the job goes through the
+        // Codex CLI or an OpenCode server, so it is reported either way.
+        defaultedBackend: match.defaultedBackend,
+        requestedBackend: match.requestedBackend,
+        verifiedAgainst: verified
       },
       null,
       2
@@ -57,7 +87,7 @@ export function resolve(phrase) {
         ok: false,
         code: error.code ?? "resolve_failed",
         error: error.message,
-        available: isSpoken ? error.candidates : describeAvailable()
+        available: isSpoken ? error.candidates : describeAvailable(passed)
       },
       null,
       2

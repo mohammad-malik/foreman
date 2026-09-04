@@ -6,6 +6,7 @@
  * registered workspace.
  */
 
+import { cancelCodexJob } from "../codex-job.mjs";
 import { OpencodeApi } from "../opencode-api.mjs";
 import { currentServer } from "../servers.mjs";
 import { diffAgainstBaseline, diffStat, revertPaths } from "../git-baseline.mjs";
@@ -264,18 +265,29 @@ export async function cancel(jobID) {
     return `Job ${job.id} is already ${job.status}. Nothing to cancel.`;
   }
 
-  const server = currentServer(workspace);
   const lines = [];
 
-  if (server) {
-    try {
-      await new OpencodeApi(server).interrupt(job.sessionID);
-      lines.push(`Interrupted session ${job.sessionID}.`);
-    } catch (error) {
-      lines.push(`Could not interrupt the session cleanly: ${error.message}`);
-    }
+  if (job.backend === "codex") {
+    // The process tree, not just the process: codex runs its shell commands as
+    // children, and signalling only the parent leaves one of them mid-write.
+    const killed = cancelCodexJob(job);
+    lines.push(
+      killed.killed
+        ? `Stopped the codex process (pid ${job.pid}).`
+        : `Could not stop pid ${job.pid}: ${killed.reason}.`
+    );
   } else {
-    lines.push("The server was already gone.");
+    const server = currentServer(workspace);
+    if (server) {
+      try {
+        await new OpencodeApi(server).interrupt(job.sessionID);
+        lines.push(`Interrupted session ${job.sessionID}.`);
+      } catch (error) {
+        lines.push(`Could not interrupt the session cleanly: ${error.message}`);
+      }
+    } else {
+      lines.push("The server was already gone.");
+    }
   }
 
   // Recompute the diff now rather than keeping whatever was last collected.

@@ -39,6 +39,7 @@ Read-only:
 
 Human-invoked:
   delegate --task <text> [--model kimi] [--route standard|fast]
+           [--backend codex|opencode]
            [--role builder|fixer|researcher] [--write]
            [--background] [--timeout <seconds>] [--allow-dirty-tree]
            [--unattended] [--dir <path>]
@@ -61,7 +62,7 @@ Maintenance:
 `;
 
 const DELEGATE_SPEC = {
-  valueOptions: ["task", "model", "route", "role", "timeout", "dir", "budget"],
+  valueOptions: ["task", "model", "route", "backend", "role", "timeout", "dir", "budget"],
   boolOptions: ["write", "background", "wait", "allow-dirty-tree", "unattended"]
 };
 
@@ -155,6 +156,9 @@ const COMMANDS = {
         task,
         model: options.model ?? "kimi",
         route: options.route ?? "standard",
+        // Omitted means the model's own default backend, which is the point of
+        // recording one per model. Never inferred from anything else.
+        backend: options.backend ?? null,
         role: options.role ?? "builder",
         write: Boolean(options.write),
         // options.dir can only be set when the raw string held no bare --dir

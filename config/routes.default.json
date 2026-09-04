@@ -1,7 +1,20 @@
 {
-  "version": 3,
+  "version": 4,
 
-  "//": "Spoken names are DATA, not logic. Nothing in the runtime or the skills knows that 'kimi' or 'glm' means anything: `resolve` matches a phrase against these lists. Adding a model, or a new way of saying an existing one, is an edit to this file and nothing else. Speed words (fast, quick, cheap, standard, full) are handled by resolve and are not listed here, so 'fast kimi' needs no entry of its own.",
+  "//": "Spoken names are DATA, not logic. Nothing in the runtime or the skills knows that 'kimi' or 'sol' means anything: `resolve` matches a phrase against these lists. Adding a model, a backend, or another way of saying one, is an edit to this file and nothing else. Speed words (fast, quick, cheap, standard, full) are handled by resolve and are not listed here, so 'fast kimi' needs no entry of its own.",
+
+  "//backends": "Two ways to actually run a model. `opencode` drives a local OpenCode server, which is how the non-OpenAI models are reachable. `codex` shells out to the Codex CLI, which runs OpenAI models on the ChatGPT sign-in rather than through a paid API key. Each alias names the backend it should use by default, and saying a backend word out loud overrides it: 'opencode sol' forces the OpenCode path.",
+
+  "backends": {
+    "codex": {
+      "description": "The Codex CLI (codex exec) on your ChatGPT sign-in.",
+      "spoken": ["codex", "via codex", "codex cli", "through codex"]
+    },
+    "opencode": {
+      "description": "A local OpenCode server.",
+      "spoken": ["opencode", "open code", "via opencode", "through opencode"]
+    }
+  },
 
   "//retired": "Names that used to work and must now refuse rather than resolve. A retired name is not the same as an unknown one: 'glm 5.2' would otherwise match the `glm` alias by containment and quietly dispatch to GLM 5.3 Flash, which is exactly the silent substitution this plugin exists to prevent. The value is the sentence the user sees.",
 
@@ -18,11 +31,14 @@
     "kimi": {
       "description": "Moonshot Kimi K3. General purpose primary worker.",
       "spoken": ["kimi", "kimi k3", "kimi-k3", "k3", "moonshot"],
-      "routes": {
-        "standard": { "providerID": "opencode", "modelID": "kimi-k3" },
-        "fast": {
-          "providerID": "fireworks-ai",
-          "modelID": "accounts/fireworks/routers/kimi-k3-fast"
+      "defaultBackend": "opencode",
+      "backends": {
+        "opencode": {
+          "standard": { "providerID": "opencode", "modelID": "kimi-k3" },
+          "fast": {
+            "providerID": "fireworks-ai",
+            "modelID": "accounts/fireworks/routers/kimi-k3-fast"
+          }
         }
       }
     },
@@ -43,54 +59,76 @@
         "flash",
         "zhipu"
       ],
-      "routes": {
-        "standard": {
-          "providerID": "fireworks-ai",
-          "modelID": "accounts/fireworks/models/glm-5p3-flash"
-        },
-        "fast": {
-          "providerID": "fireworks-ai",
-          "modelID": "accounts/fireworks/models/glm-5p3-flash"
+      "defaultBackend": "opencode",
+      "backends": {
+        "opencode": {
+          "standard": {
+            "providerID": "fireworks-ai",
+            "modelID": "accounts/fireworks/models/glm-5p3-flash"
+          },
+          "fast": {
+            "providerID": "fireworks-ai",
+            "modelID": "accounts/fireworks/models/glm-5p3-flash"
+          }
         }
       }
     },
 
     "sol": {
-      "description": "GPT-5.6 Sol. Live now via the opencode provider.",
+      "description": "GPT-5.6 Sol. Runs through Codex on the ChatGPT sign-in unless you say opencode.",
+      "spoken": ["sol", "gpt 5.6 sol", "gpt-5.6-sol", "gpt5.6 sol", "gpt 5.6", "gpt-5.6", "gpt5.6"],
+      "defaultBackend": "codex",
+      "backends": {
+        "codex": {
+          "standard": { "modelID": "gpt-5.6-sol" }
+        },
+        "opencode": {
+          "standard": { "providerID": "opencode", "modelID": "gpt-5.6-sol" }
+        }
+      }
+    },
+
+    "luna": {
+      "description": "GPT-5.6 Luna. Runs through Codex on the ChatGPT sign-in unless you say opencode.",
       "spoken": [
-        "sol",
-        "gpt 5.6 sol",
-        "gpt-5.6-sol",
-        "gpt5.6 sol",
-        "gpt 5.6",
-        "gpt-5.6",
-        "gpt5.6"
+        "luna",
+        "gpt 5.6 luna",
+        "gpt-5.6-luna",
+        "gpt5.6 luna",
+        "gpt 5.6 moon",
+        "moon"
       ],
-      "routes": {
-        "standard": { "providerID": "opencode", "modelID": "gpt-5.6-sol" }
+      "defaultBackend": "codex",
+      "backends": {
+        "codex": {
+          "standard": { "modelID": "gpt-5.6-luna" }
+        },
+        "opencode": {
+          "standard": { "providerID": "opencode", "modelID": "gpt-5.6-luna" }
+        }
       }
     },
 
     "astra": {
-      "description": "GPT-6, shipping as gpt-6-astra. Reserved: activates by itself the moment a matching model id appears upstream.",
+      "description": "GPT-6, shipping as gpt-6-astra. Reserved: activates by itself the moment a matching model appears, and being an OpenAI model it defaults to Codex like sol and luna.",
       "spoken": ["astra", "gpt-6-astra", "gpt6 astra", "gpt 6 astra", "gpt-6", "gpt6", "gpt 6"],
       "reserved": true,
+      "defaultBackend": "codex",
       "watchPatterns": ["gpt-6", "astra"],
-      "routes": {},
+      "backends": {},
 
-      "//pendingRoutes": "Candidate ids, tried in order, promoted to real routes only when the live inventory actually lists one. So the day GPT-6 lands, 'have astra do X' works with no edit to this file, and until then astra still refuses rather than guessing.",
+      "//pendingBackends": "Candidate ids per backend, tried in order, promoted to real routes only when that backend actually offers one. So the day GPT-6 lands, 'have astra do X' works with no edit to this file, and until then astra refuses rather than guessing.",
 
-      "pendingRoutes": {
-        "standard": [
-          { "providerID": "opencode", "modelID": "gpt-6-astra" },
-          { "providerID": "opencode", "modelID": "gpt-6" }
-        ],
-        "fast": [
-          {
-            "providerID": "fireworks-ai",
-            "modelID": "accounts/fireworks/routers/gpt-6-astra-fast"
-          }
-        ]
+      "pendingBackends": {
+        "codex": {
+          "standard": [{ "modelID": "gpt-6-astra" }, { "modelID": "gpt-6" }]
+        },
+        "opencode": {
+          "standard": [
+            { "providerID": "opencode", "modelID": "gpt-6-astra" },
+            { "providerID": "opencode", "modelID": "gpt-6" }
+          ]
+        }
       }
     }
   }

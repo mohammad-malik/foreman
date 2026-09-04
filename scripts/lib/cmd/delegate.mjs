@@ -13,6 +13,8 @@ import { listWorkspaces, requireWorkspaceFor } from "../registry.mjs";
 import { reconcileAll } from "../reconcile.mjs";
 import { acquireServer, sweep, touch } from "../servers.mjs";
 import { detectVersion, loadInventory } from "../opencode.mjs";
+import { codexModels, detectCodexVersion, codexSignedIn } from "../codex.mjs";
+import { readCodexJob, startCodexJob } from "../codex-job.mjs";
 import { resolveRoute } from "../routes.mjs";
 import { OpencodeApi } from "../opencode-api.mjs";
 import { captureBaseline, describeDirty, isGitRepository } from "../git-baseline.mjs";
@@ -72,6 +74,7 @@ export async function delegate({
   task,
   model = "kimi",
   route = "standard",
+  backend = null,
   role = "builder",
   write = false,
   directory,
@@ -102,9 +105,32 @@ export async function delegate({
   reconcileAll(allWorkspaces);
   await sweep(allWorkspaces, { hasRunningJobs: hasActiveJobs });
 
-  const version = detectVersion();
-  const inventory = loadInventory({ version: version.version });
-  const resolved = resolveRoute(model, route, inventory.models);
+  // Both backends' model lists, so resolution can verify whichever one ends up
+  // running this. A backend that cannot be reached is omitted rather than
+  // reported empty: omitted means unverified, empty would mean "offers
+  // nothing" and would refuse every model on it.
+  const inventories = {};
+  try {
+    const version = detectVersion();
+    inventories.opencode = loadInventory({ version: version.version }).models;
+  } catch (error) {
+    // Fatal only if this job needs OpenCode, which resolveRoute decides below.
+    inventories.opencodeError = error;
+  }
+  const codexList = codexModels();
+  if (codexList) {
+    inventories.codex = codexList;
+  }
+
+  const resolved = resolveRoute(model, route, {
+    ...(inventories.opencode ? { opencode: inventories.opencode } : {}),
+    ...(inventories.codex ? { codex: inventories.codex } : {})
+  }, { backend });
+
+  if (resolved.backend === "opencode" && inventories.opencodeError) {
+    throw inventories.opencodeError;
+  }
+
   const { agent, downgraded } = chooseAgent(role, write, unattended);
 
   let baseline = null;
@@ -128,6 +154,24 @@ export async function delegate({
         ].join("\n")
       );
     }
+  }
+
+  if (resolved.backend === "codex") {
+    return dispatchCodex({
+      workspace,
+      resolved,
+      task,
+      model,
+      route,
+      role,
+      write,
+      downgraded,
+      unattended,
+      baseline,
+      wait,
+      timeoutSeconds,
+      budgetSeconds
+    });
   }
 
   const server = await acquireServer(workspace);
@@ -214,6 +258,158 @@ export async function delegate({
 
   const finished = await collectResult(job.slug, job.id);
   return [...header, "", renderResult(finished)].join("\n");
+}
+
+/**
+ * Dispatch through the Codex CLI.
+ *
+ * Deliberately shorter than the OpenCode path, because there is less to go
+ * wrong: one detached process, no server to acquire or reclaim, and no
+ * permission channel. What the agent may touch is decided by the sandbox before
+ * it starts rather than negotiated while it runs.
+ *
+ * Everything else is kept identical on purpose. The same job record, the same
+ * git baseline, the same reporting, so `status`, `result`, `wait`, `revert` and
+ * the Stop hook do not care which backend ran the work.
+ */
+async function dispatchCodex({
+  workspace,
+  resolved,
+  task,
+  model,
+  route,
+  role,
+  write,
+  downgraded,
+  unattended,
+  baseline,
+  wait,
+  timeoutSeconds,
+  budgetSeconds
+}) {
+  if (unattended) {
+    throw new Error(
+      "--unattended does not apply to the codex backend. `codex exec` never pauses to ask, so there is nothing to run unattended; what it may touch is set by its sandbox instead."
+    );
+  }
+
+  // Checked here rather than at resolution time, so a missing CLI is reported
+  // as a missing CLI instead of as a job that failed for no stated reason.
+  const version = detectCodexVersion();
+  if (!codexSignedIn()) {
+    throw new Error(
+      "Codex has no stored credentials, so it cannot run. Sign in with `codex login` and try again."
+    );
+  }
+
+  const job = createJob(workspace, {
+    task,
+    backend: "codex",
+    alias: model,
+    route,
+    providerID: null,
+    modelID: resolved.modelID,
+    qualified: resolved.qualified,
+    agent: "codex-exec",
+    role,
+    access: write ? "write" : "read",
+    codexVersion: version.raw,
+    baseline,
+    budgetMs: budgetSeconds ? budgetSeconds * 1000 : DEFAULT_BUDGET_MS,
+    status: "running",
+    startedAt: new Date().toISOString()
+  });
+
+  let started;
+  try {
+    started = startCodexJob({
+      slug: workspace.slug,
+      jobID: job.id,
+      model: resolved.modelID,
+      root: workspace.root,
+      task,
+      write
+    });
+  } catch (error) {
+    updateJob(job, {
+      status: "failed",
+      finishedAt: new Date().toISOString(),
+      error: `Could not start codex: ${error.message}`
+    });
+    throw error;
+  }
+
+  const running = updateJob(job, {
+    pid: started.pid,
+    sandbox: started.sandbox,
+    logFile: started.logFile,
+    errFile: started.errFile,
+    messageFile: started.messageFile,
+    taskFile: started.taskFile
+  });
+
+  const header = [
+    `Dispatched ${running.id} to ${resolved.qualified}`,
+    keyValue([
+      ["workspace", workspace.root],
+      ["backend", `codex ${version.version ?? ""}`.trim()],
+      ["sandbox", started.sandbox],
+      ["access", write ? "write" : "read-only"],
+      ["pid", String(started.pid)]
+    ])
+  ];
+
+  if (downgraded) {
+    header.push(
+      bullet(
+        `role "${role}" implies edits but --write was not given, so this runs in a read-only sandbox and cannot change files`
+      )
+    );
+  }
+
+  if (!wait) {
+    header.push("");
+    header.push("Running in the background. It will be reported when it finishes, or run:");
+    header.push(bullet(`external-agents result ${running.id}`));
+    return header.join("\n");
+  }
+
+  const waitMs = Math.min(timeoutSeconds ? timeoutSeconds * 1000 : DEFAULT_WAIT_MS, MAX_WAIT_MS);
+  const finishedInTime = await waitForCodex(running, waitMs);
+
+  if (!finishedInTime) {
+    header.push("");
+    header.push(
+      `Still running after ${Math.round(waitMs / 1000)}s. It keeps going in the background; check with:`
+    );
+    header.push(bullet(`external-agents result ${running.id}`));
+    return header.join("\n");
+  }
+
+  const finished = await collectResult(running.slug, running.id);
+  return [...header, "", renderResult(finished)].join("\n");
+}
+
+/**
+ * Wait for the Codex process to exit.
+ *
+ * Liveness is the signal, not the log: a `turn.completed` event means the model
+ * finished its turn, while the process may still be flushing. Polling is slower
+ * than on the OpenCode path because there is no permission request that might
+ * need surfacing early.
+ */
+async function waitForCodex(job, waitMs) {
+  const deadline = Date.now() + waitMs;
+
+  for (;;) {
+    if (!readCodexJob(job).alive) {
+      return true;
+    }
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
 }
 
 /**

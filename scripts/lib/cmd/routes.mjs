@@ -6,6 +6,7 @@
  * time is worse than no route at all.
  */
 
+import { codexModels } from "../codex.mjs";
 import { detectVersion, loadInventory } from "../opencode.mjs";
 import { findReservedCandidates, listAliases, loadRetired, resolveRoute } from "../routes.mjs";
 import { bullet, heading } from "../render.mjs";
@@ -27,9 +28,15 @@ export function routes({ refresh = false } = {}) {
 
   const lines = [heading("Model routes")];
 
-  // The inventory goes in, so a reserved alias whose id has appeared upstream
-  // is listed as usable here rather than as something still being waited on.
-  for (const alias of listAliases(models)) {
+  const codexList = codexModels();
+  const inventories = {
+    ...(models ? { opencode: models } : {}),
+    ...(codexList ? { codex: codexList } : {})
+  };
+
+  // The inventories go in, so a reserved alias whose id has appeared is listed
+  // as usable here rather than as something still being waited on.
+  for (const alias of listAliases(inventories)) {
     lines.push("");
     lines.push(
       `${alias.alias}${alias.description ? ` - ${alias.description}` : ""}${alias.promoted ? "  (just went live)" : ""}`
@@ -41,11 +48,13 @@ export function routes({ refresh = false } = {}) {
     }
 
     for (const route of alias.routes) {
+      const label = `${route.backend}/${route.route}`.padEnd(18);
+      const mark = route.isDefaultBackend && alias.backends.length > 1 ? "  <- default" : "";
       try {
-        resolveRoute(alias.alias, route.route, models);
-        lines.push(bullet(`${route.route.padEnd(9)} ${route.qualified}${models ? "" : "  (unverified)"}`));
+        resolveRoute(alias.alias, route.route, inventories, { backend: route.backend });
+        lines.push(bullet(`${label} ${route.qualified}${mark}`));
       } catch (error) {
-        lines.push(bullet(`${route.route.padEnd(9)} ${route.qualified}  UNAVAILABLE`));
+        lines.push(bullet(`${label} ${route.qualified}  UNAVAILABLE`));
         lines.push(bullet(error.message, 6));
         if (error.candidates?.length) {
           lines.push(bullet(`closest live IDs: ${error.candidates.join(", ")}`, 6));
@@ -55,7 +64,7 @@ export function routes({ refresh = false } = {}) {
   }
 
   if (models) {
-    for (const entry of findReservedCandidates(models)) {
+    for (const entry of findReservedCandidates(inventories)) {
       lines.push("");
       lines.push(
         `${entry.alias}: matching IDs are now live upstream (${entry.matches.join(", ")}). Add a route to start using them.`
