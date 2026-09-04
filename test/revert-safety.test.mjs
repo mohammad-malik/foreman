@@ -211,3 +211,73 @@ test("the executable bit survives a revert", { skip: process.platform === "win32
 
   assert.equal(fs.statSync(script).mode & 0o111, 0o111, "a restored script must still be executable");
 });
+
+test("reverting through a hard link does not truncate the linked file", { skip: process.platform === "win32" }, () => {
+  // If the agent replaces a tracked path with a hard link to a file elsewhere
+  // on disk, an in-place write would follow it and destroy that other file.
+  // Renaming over the path touches only the directory entry.
+  const { root } = makeRepo();
+  const inside = path.join(root, "notes.txt");
+  fs.writeFileSync(inside, "mine\n");
+
+  const baseline = captureBaseline(root);
+
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "ea-outside-"));
+  const outside = path.join(outsideDir, "important.txt");
+  fs.writeFileSync(outside, "must not be touched\n");
+
+  fs.unlinkSync(inside);
+  fs.linkSync(outside, inside);
+
+  const diff = diffAgainstBaseline(baseline);
+  revertPaths(root, baseline, diff.changed);
+
+  assert.equal(
+    fs.readFileSync(outside, "utf8"),
+    "must not be touched\n",
+    "a file outside the repository must survive a revert inside it"
+  );
+  assert.equal(fs.readFileSync(inside, "utf8"), "mine\n");
+});
+
+test("a 0.3.0 record without indexEntries keeps its staged state", () => {
+  // Records outlive upgrades. 0.3.0 recorded only `staged`; reading solely
+  // `indexEntries` would silently unstage work the user had staged.
+  const { root, git } = makeRepo();
+  const file = path.join(root, "tracked.txt");
+
+  fs.writeFileSync(file, "committed\nstaged by the user\n");
+  git("add", "--", "tracked.txt");
+
+  const baseline = captureBaseline(root);
+  // Rewrite the record the way 0.3.0 stored it.
+  baseline.staged = ["tracked.txt"];
+  delete baseline.indexEntries;
+
+  fs.writeFileSync(file, "committed\nstaged by the user\nagent line\n");
+
+  const diff = diffAgainstBaseline(baseline);
+  revertPaths(root, baseline, diff.changed);
+
+  assert.notEqual(git("ls-files", "-s", "--", "tracked.txt").trim(), "", "must still be staged");
+  assert.equal(fs.readFileSync(file, "utf8"), "committed\nstaged by the user\n");
+});
+
+test("index snapshots are read in a single git call", () => {
+  // A per-path loop stalls baseline capture on a generated tree. This asserts
+  // the entries are still captured correctly for many files at once.
+  const { root, git } = makeRepo();
+
+  for (let i = 0; i < 25; i += 1) {
+    fs.writeFileSync(path.join(root, `f${i}.txt`), `content ${i}\n`);
+  }
+  git("add", "-A");
+
+  const baseline = captureBaseline(root);
+
+  assert.equal(Object.keys(baseline.indexEntries).length, 25);
+  for (let i = 0; i < 25; i += 1) {
+    assert.match(baseline.indexEntries[`f${i}.txt`].blob, /^[0-9a-f]{40,64}$/);
+    assert.equal(baseline.indexEntries[`f${i}.txt`].mode, "100644");
+  }
+});
