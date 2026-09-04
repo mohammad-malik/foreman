@@ -1,0 +1,11 @@
+node_modules/
+*.log
+.DS_Store
+
+# Local runtime state. Holds ports, PIDs, endpoints and captured agent output.
+# Never commit any of it.
+.state/
+state/
+*.pid
+*.lock
+*.endpoint

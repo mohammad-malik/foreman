@@ -1,0 +1,13 @@
+{
+  "name": "local",
+  "owner": {
+    "name": "Mohammad Malik"
+  },
+  "plugins": [
+    {
+      "name": "external-agents",
+      "source": "./",
+      "description": "Delegate a task to a non-Claude model through OpenCode, then verify the result against git."
+    }
+  ]
+}
