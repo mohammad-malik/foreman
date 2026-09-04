@@ -88,6 +88,44 @@ function clearLock(slug) {
 }
 
 /**
+ * Move an unparseable lock aside, but only if it has not changed since we read
+ * it.
+ *
+ * The check matters. A blind unlink of a torn lock can delete a complete claim
+ * that another process wrote between our read and our delete, and then both
+ * processes start a server for the same workspace: one wins the record and the
+ * other runs forever with nothing referencing it. That is the orphaned
+ * write-capable server this file works hardest to avoid.
+ *
+ * Renamed rather than deleted, so a corrupt lock survives for diagnosis
+ * instead of vanishing.
+ */
+function quarantineIfUnchanged(slug) {
+  const file = lockFile(slug);
+
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return; // Gone already.
+  }
+
+  // Still unreadable? Then it is the corrupt file we saw, not a fresh claim.
+  try {
+    JSON.parse(raw);
+    return; // Someone wrote a valid claim in the gap. Leave it alone.
+  } catch {
+    // Corrupt, as expected.
+  }
+
+  try {
+    fs.renameSync(file, `${file}.corrupt-${Date.now()}`);
+  } catch {
+    // Lost the race to whoever else is cleaning up. Fine either way.
+  }
+}
+
+/**
  * Claim the right to start a server. Returns false when someone else holds a
  * fresh claim, in which case the caller waits for their server rather than
  * starting a competing one.
@@ -133,7 +171,13 @@ function claimStart(slug, workspaceRoot, attempt = 0) {
     // O_EXCL is the concurrency control, so the write cannot be atomic. Clearing
     // an unparseable lock is the only way out, and it is safe: a real running
     // server would have a readable record.
-    clearLock(slug);
+    // Remove it only if it is still the same unreadable bytes. An
+    // unconditional unlink here could delete a complete claim another process
+    // wrote in the gap between our read and our delete, and then both of us
+    // would start a server for one workspace, leaving one of them orphaned
+    // with no record anywhere. Rename-aside rather than unlink, so the
+    // evidence survives for diagnosis.
+    quarantineIfUnchanged(slug);
     return claimStart(slug, workspaceRoot, attempt + 1);
   }
 
@@ -443,10 +487,21 @@ export async function acquireServer(workspace, { attempt = 0 } = {}) {
     const reclaimed = await stopServer(workspace, { reason: "unhealthy" });
 
     if (!reclaimed.stopped && reclaimed.reason === ACTIVE_JOBS_REASON) {
-      // Adopt it rather than fight it. A wedged server carrying live jobs is
-      // reconciliation's problem to report, not a reason to destroy work.
-      touch(slug);
-      return existing;
+      // Adopt it rather than fight it: a slow-but-live server carrying work is
+      // reconciliation's problem to report, not a reason to destroy the work.
+      //
+      // Adopt only what the healthy path would accept, though. Returning a
+      // record without re-checking meant a dead server could be handed back,
+      // and the caller threw on createSession instead of getting a new server.
+      if (looksLikeOurServer(existing) && (await health(existing))) {
+        touch(slug);
+        return existing;
+      }
+
+      throw new OpencodeError(
+        `The OpenCode server for ${root} is not responding, and it still has active jobs so it was not replaced. Cancel them, or run: /external-agents:unregister ${root} --force`,
+        { code: "server_unreachable_with_jobs" }
+      );
     }
   }
 
@@ -471,7 +526,12 @@ export async function stopServer(workspace, { reason = "requested", force = fals
   // the strength of a single five-second health probe: a server busy indexing
   // answers in six, and another delegation's in-flight work was force-killed.
   // Same defect as the sweepServers bug, in the reclaim path.
-  if (!force && record.status === "running" && hasActiveJobs(workspace)) {
+  // The pid must actually be alive. Sparing a corpse protects no work and
+  // wedges the workspace: with a dead server and a job record still "running",
+  // every acquire failed its health check, was refused here, adopted the dead
+  // record, and then threw on createSession. Before the guard existed that
+  // case self-healed as "stale record, pid reused".
+  if (!force && record.status === "running" && isAlive(record.pid) && hasActiveJobs(workspace)) {
     return { stopped: false, reason: ACTIVE_JOBS_REASON };
   }
 

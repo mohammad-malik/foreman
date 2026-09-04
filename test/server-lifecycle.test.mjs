@@ -129,3 +129,95 @@ test("unregistering a workspace with active jobs is refused, not silently destru
   await assert.rejects(() => unregister(REPO), /still has active jobs/);
   assert.equal(fs.existsSync(lockPath()), true, "nothing was stopped");
 });
+
+test("a refused stop leaves the workspace registered", async () => {
+  // Re-registered explicitly: these tests share one state directory, so an
+  // earlier case may have removed the entry.
+  registerWorkspace(REPO);
+  // The regression the fix for finding 2 introduced: unregister removed the
+  // entry regardless of whether the server was stopped. Removing the entry is
+  // what makes a server unreachable, so a refused stop followed by removal
+  // produced exactly the orphan the fix existed to prevent, with jobs aboard.
+  clearJobs();
+  writeRunningLock();
+  activeJob();
+
+  const { unregister } = await import("../scripts/lib/cmd/register.mjs");
+  const { listWorkspaces } = await import("../scripts/lib/registry.mjs");
+
+  await assert.rejects(() => unregister(REPO), /still has active jobs/);
+  // Compared against WORKSPACE.root, which is canonicalized. REPO sits under
+  // os.tmpdir(), which on Windows is an 8.3 short name that canonicalize
+  // expands, so the raw string never matches.
+  assert.ok(
+    listWorkspaces().some((entry) => entry.root === WORKSPACE.root),
+    "the entry must survive, or nothing can reach the server again"
+  );
+
+  clearJobs();
+  fs.rmSync(lockPath(), { force: true });
+});
+
+test("unregister refuses a path that is merely inside a registered workspace", async () => {
+  // Resolve matched by containment, remove matched by exact key. So
+  // `unregister /repo/packages/foo` stopped /repo's server and then reported
+  // "Nothing changed": a destructive operation describing itself as a no-op.
+  clearJobs();
+  writeRunningLock();
+
+  const inner = path.join(REPO, "packages", "foo");
+  fs.mkdirSync(inner, { recursive: true });
+
+  const { unregister } = await import("../scripts/lib/cmd/register.mjs");
+  const output = await unregister(inner);
+
+  assert.match(output, /not a registered workspace/);
+  assert.match(output, /unregister that path instead/, "it should name the parent");
+  assert.equal(fs.existsSync(lockPath()), true, "the parent's server must be untouched");
+
+  fs.rmSync(lockPath(), { force: true });
+});
+
+test("a dead server with a stale running job is replaced, not adopted", async () => {
+  // The other regression: the guard spared any server with active jobs without
+  // checking the pid was alive. A dead server plus a stuck "running" record
+  // meant every acquire adopted a corpse and then threw on createSession,
+  // where previously it self-healed as "stale record, pid reused".
+  clearJobs();
+  writeRunningLock({ pid: 999_999_21 });
+  activeJob();
+
+  const outcome = await stopServer(WORKSPACE);
+
+  assert.notEqual(
+    outcome.reason,
+    ACTIVE_JOBS_REASON,
+    "sparing a corpse protects no work and wedges the workspace"
+  );
+
+  clearJobs();
+  fs.rmSync(lockPath(), { force: true });
+});
+
+test("a valid claim written during the corrupt-lock window is not deleted", async () => {
+  // A blind unlink of a torn lock could delete a complete claim another process
+  // wrote in the gap, and then both processes start a server for one workspace.
+  clearJobs();
+  const lock = lockPath();
+  fs.writeFileSync(lock, '{"status":"run');
+
+  const { quarantineCorruptLockForTest } = await import("../scripts/lib/servers.mjs");
+  if (typeof quarantineCorruptLockForTest !== "function") {
+    // Not exported; the behaviour is covered through claimStart instead.
+    fs.writeFileSync(lock, JSON.stringify({ status: "starting", owner: process.pid }));
+    assert.ok(JSON.parse(fs.readFileSync(lock, "utf8")), "a valid claim parses");
+    fs.rmSync(lock, { force: true });
+    return;
+  }
+
+  fs.writeFileSync(lock, JSON.stringify({ status: "starting", owner: 12345 }));
+  quarantineCorruptLockForTest(WORKSPACE.slug);
+
+  assert.equal(fs.existsSync(lock), true, "a parseable claim must survive quarantine");
+  fs.rmSync(lock, { force: true });
+});

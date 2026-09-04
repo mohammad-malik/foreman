@@ -9,14 +9,14 @@
 import fs from "node:fs";
 
 import { hasActiveJobs } from "../jobs.mjs";
-import { stopServer } from "../servers.mjs";
+import { ACTIVE_JOBS_REASON, stopServer } from "../servers.mjs";
 import {
   findWorkspaceFor,
   listWorkspaces,
   registerWorkspace,
   unregisterWorkspace
 } from "../registry.mjs";
-import { canonicalize, findGitRoot } from "../workspace.mjs";
+import { canonicalize, containmentKey, findGitRoot } from "../workspace.mjs";
 import { bullet, heading, keyValue } from "../render.mjs";
 
 export function register(rawPath, { allowExternal = false, force = false } = {}) {
@@ -81,41 +81,71 @@ export async function unregister(rawPath, { force = false } = {}) {
     throw new Error("Usage: unregister <path>");
   }
 
-  const target = findWorkspaceFor(rawPath);
+  const requested = canonicalize(rawPath);
+  const containing = findWorkspaceFor(rawPath);
 
-  if (target && !force) {
+  // Resolve and remove must agree. findWorkspaceFor matches by containment, so
+  // `unregister /repo/packages/foo` used to resolve /repo's entry and stop
+  // /repo's server, while unregisterWorkspace deleted by exact key, matched
+  // nothing, and reported "was not registered. Nothing changed." A destructive
+  // operation describing itself as a no-op.
+  const target =
+    containing && containmentKey(containing.root) === containmentKey(requested) ? containing : null;
+
+  if (!target) {
+    return `${requested} is not a registered workspace. Nothing changed.${
+      containing ? `\n  Its parent ${containing.root} is registered; unregister that path instead.` : ""
+    }`;
+  }
+
+  if (!force && hasActiveJobs(target)) {
     // Refuse rather than orphan or kill. A job mid-flight on this server would
     // be destroyed by unregistering, and silently.
-    if (hasActiveJobs(target)) {
-      throw new Error(
-        [
-          `${target.root} still has active jobs. Unregistering would stop its server and kill them.`,
-          "",
-          "Wait for them, cancel them, or pass --force to unregister anyway:",
-          `  /external-agents:unregister ${target.root} --force`
-        ].join("\n")
-      );
-    }
+    throw new Error(
+      [
+        `${target.root} still has active jobs. Unregistering would stop its server and kill them.`,
+        "",
+        "Wait for them, cancel them, or pass --force to unregister anyway:",
+        `  /external-agents:unregister ${target.root} --force`
+      ].join("\n")
+    );
   }
 
-  const lines = [];
+  const stopped = await stopServer(target, { reason: "workspace unregistered", force });
 
-  if (target) {
-    const stopped = await stopServer(target, { reason: "workspace unregistered", force });
-    if (stopped.stopped) {
-      lines.push(`Stopped its OpenCode server (pid ${stopped.pid}).`);
-    } else if (stopped.reason && stopped.reason !== "no server recorded") {
-      lines.push(`Its server was not stopped: ${stopped.reason}`);
-    }
+  // Removing the entry is what makes a server unreachable: no sweep visits an
+  // unregistered workspace and `server stop` refuses the path. So a server that
+  // was NOT stopped must keep its registry entry, or the refusal and the
+  // kept-on-failed-kill record are both undone by the very next line.
+  const cleanupOutcomes = new Set([
+    "no server recorded",
+    "stale record, pid reused",
+    "cleared a partial start record"
+  ]);
+
+  if (!stopped.stopped && !cleanupOutcomes.has(stopped.reason)) {
+    throw new Error(
+      [
+        `${target.root} was left registered, because its server could not be stopped: ${stopped.reason}`,
+        "",
+        "Unregistering now would leave that server running with nothing able to see or stop it.",
+        stopped.reason === ACTIVE_JOBS_REASON
+          ? "  Cancel its jobs, then try again."
+          : `  Try again, or force it: /external-agents:unregister ${target.root} --force`
+      ].join("\n")
+    );
   }
 
-  const removed = unregisterWorkspace(rawPath);
-
-  lines.unshift(
+  const removed = unregisterWorkspace(target.root);
+  const lines = [
     removed
       ? `Removed ${removed.root} from the workspace allowlist.`
-      : `${canonicalize(rawPath)} was not registered. Nothing changed.`
-  );
+      : `${requested} was not registered. Nothing changed.`
+  ];
+
+  if (stopped.stopped) {
+    lines.push(`Stopped its OpenCode server (pid ${stopped.pid}).`);
+  }
 
   return lines.join("\n");
 }
