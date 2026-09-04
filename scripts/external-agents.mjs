@@ -14,6 +14,7 @@ import { parseArgs } from "./lib/args.mjs";
 import { doctor } from "./lib/cmd/doctor.mjs";
 import { register, unregister, workspaces } from "./lib/cmd/register.mjs";
 import { routes } from "./lib/cmd/routes.mjs";
+import { servers, serverStart, serverStop, sweepServers } from "./lib/cmd/server.mjs";
 import { fail } from "./lib/render.mjs";
 
 const USAGE = `external-agents runtime
@@ -23,10 +24,17 @@ Read-only:
   routes [--refresh]            List model aliases and live availability
   workspaces                    List registered workspaces
 
+  servers                       Show the OpenCode server for each workspace
+
 Human-invoked:
   register <path> [--allow-external] [--force]
                                 Add a workspace to the allowlist
   unregister <path>             Remove a workspace from the allowlist
+
+Maintenance:
+  server-start [path]           Start or reuse this workspace's server
+  server-stop [path]            Stop this workspace's server
+  sweep                         Clean up dead and idle servers
 `;
 
 const COMMANDS = {
@@ -64,10 +72,32 @@ const COMMANDS = {
     const { positionals } = parseArgs(argv, {});
     process.stdout.write(`${unregister(positionals[0])}\n`);
     return 0;
+  },
+
+  servers: () => {
+    process.stdout.write(`${servers()}\n`);
+    return 0;
+  },
+
+  "server-start": async (argv) => {
+    const { positionals } = parseArgs(argv, {});
+    process.stdout.write(`${await serverStart(positionals[0])}\n`);
+    return 0;
+  },
+
+  "server-stop": async (argv) => {
+    const { positionals } = parseArgs(argv, {});
+    process.stdout.write(`${await serverStop(positionals[0])}\n`);
+    return 0;
+  },
+
+  sweep: async () => {
+    process.stdout.write(`${await sweepServers()}\n`);
+    return 0;
   }
 };
 
-function main() {
+async function main() {
   const [name, ...argv] = process.argv.slice(2);
 
   if (!name || name === "help" || name === "--help" || name === "-h") {
@@ -81,11 +111,11 @@ function main() {
     return 2;
   }
 
-  return command(argv);
+  return await command(argv);
 }
 
 try {
-  process.exitCode = main();
+  process.exitCode = await main();
 } catch (error) {
   process.stderr.write(`${fail(error.message)}\n`);
   process.exitCode = 1;
