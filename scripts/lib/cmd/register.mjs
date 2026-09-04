@@ -8,7 +8,10 @@
 
 import fs from "node:fs";
 
+import { hasActiveJobs } from "../jobs.mjs";
+import { stopServer } from "../servers.mjs";
 import {
+  findWorkspaceFor,
   listWorkspaces,
   registerWorkspace,
   unregisterWorkspace
@@ -62,14 +65,59 @@ export function register(rawPath, { allowExternal = false, force = false } = {})
   return lines.join("\n");
 }
 
-export function unregister(rawPath) {
+/**
+ * Remove a workspace from the allowlist, stopping its server first.
+ *
+ * The server has to be dealt with here, because after the registry entry is
+ * gone nothing can reach it: every sweep iterates registered workspaces, and
+ * `server stop` refuses a path that is no longer registered. Unregistering
+ * used to leave a live, authenticated, write-capable OpenCode server running
+ * until reboot, holding its port, with its password in a lock file no code
+ * path would read again, and invisible to every diagnostic command. The
+ * message said "Removed", which reads like cleanup.
+ */
+export async function unregister(rawPath, { force = false } = {}) {
   if (!rawPath) {
     throw new Error("Usage: unregister <path>");
   }
+
+  const target = findWorkspaceFor(rawPath);
+
+  if (target && !force) {
+    // Refuse rather than orphan or kill. A job mid-flight on this server would
+    // be destroyed by unregistering, and silently.
+    if (hasActiveJobs(target)) {
+      throw new Error(
+        [
+          `${target.root} still has active jobs. Unregistering would stop its server and kill them.`,
+          "",
+          "Wait for them, cancel them, or pass --force to unregister anyway:",
+          `  /external-agents:unregister ${target.root} --force`
+        ].join("\n")
+      );
+    }
+  }
+
+  const lines = [];
+
+  if (target) {
+    const stopped = await stopServer(target, { reason: "workspace unregistered", force });
+    if (stopped.stopped) {
+      lines.push(`Stopped its OpenCode server (pid ${stopped.pid}).`);
+    } else if (stopped.reason && stopped.reason !== "no server recorded") {
+      lines.push(`Its server was not stopped: ${stopped.reason}`);
+    }
+  }
+
   const removed = unregisterWorkspace(rawPath);
-  return removed
-    ? `Removed ${removed.root} from the workspace allowlist.`
-    : `${canonicalize(rawPath)} was not registered. Nothing changed.`;
+
+  lines.unshift(
+    removed
+      ? `Removed ${removed.root} from the workspace allowlist.`
+      : `${canonicalize(rawPath)} was not registered. Nothing changed.`
+  );
+
+  return lines.join("\n");
 }
 
 export function workspaces() {

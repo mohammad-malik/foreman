@@ -46,7 +46,7 @@ Human-invoked:
   revert <job-id>               Restore only the files a job changed
   register <path> [--allow-external] [--force]
                                 Add a workspace to the allowlist
-  unregister <path>             Remove a workspace from the allowlist
+  unregister <path> [--force]    Remove a workspace, stopping its server
 
 Maintenance:
   server-start [path]           Start or reuse this workspace's server
@@ -97,8 +97,9 @@ const COMMANDS = {
     return 0;
   },
 
-  unregister: (argv, raw) => {
-    process.stdout.write(`${unregister(extractPath(raw, [], argv).path)}\n`);
+  unregister: async (argv, raw) => {
+    const { path, flags } = extractPath(raw, ["force"], argv);
+    process.stdout.write(`${await unregister(path, { force: flags.has("force") })}\n`);
     return 0;
   },
 

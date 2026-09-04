@@ -36,7 +36,11 @@ import { fileURLToPath } from "node:url";
 import { isAlive, processCommandLine, terminateProcessTree } from "./process.mjs";
 import { credentialEnv } from "./credentials.mjs";
 import { opencodeBinary, OpencodeError } from "./opencode.mjs";
+import { hasActiveJobs } from "./jobs.mjs";
 import { readJsonIfPresent, stateRoot, workspaceStateDir } from "./state.mjs";
+
+/** Compared by callers, so it is named rather than repeated as a string. */
+export const ACTIVE_JOBS_REASON = "it still has active jobs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
@@ -88,7 +92,13 @@ function clearLock(slug) {
  * fresh claim, in which case the caller waits for their server rather than
  * starting a competing one.
  */
-function claimStart(slug, workspaceRoot) {
+function claimStart(slug, workspaceRoot, attempt = 0) {
+  // Bounded: the corrupt-lock and stale-claim paths both recurse, and a disk
+  // that keeps producing unreadable locks should surface as a failure rather
+  // than a spin.
+  if (attempt > 3) {
+    return false;
+  }
   const file = lockFile(slug);
   const claim = {
     status: "starting",
@@ -113,8 +123,18 @@ function claimStart(slug, workspaceRoot) {
 
   const existing = readLock(slug);
   if (!existing) {
-    // Raced with a delete. Let the caller retry from the top.
-    return false;
+    // The file exists but did not parse. That is corrupt state, not a delete
+    // race: a crash between the O_EXCL write and the running record leaves a
+    // truncated lock, and treating it as transient bricked the workspace
+    // permanently. Every acquire then burned the full retry window and failed
+    // blaming "another session", while `servers` reported "stopped" and no
+    // command pointed at the file.
+    //
+    // O_EXCL is the concurrency control, so the write cannot be atomic. Clearing
+    // an unparseable lock is the only way out, and it is safe: a real running
+    // server would have a readable record.
+    clearLock(slug);
+    return claimStart(slug, workspaceRoot, attempt + 1);
   }
 
   const stale =
@@ -124,7 +144,7 @@ function claimStart(slug, workspaceRoot) {
 
   if (stale) {
     clearLock(slug);
-    return claimStart(slug, workspaceRoot);
+    return claimStart(slug, workspaceRoot, attempt + 1);
   }
 
   return false;
@@ -418,8 +438,16 @@ export async function acquireServer(workspace, { attempt = 0 } = {}) {
       touch(slug);
       return existing;
     }
-    // Dead, replaced, or not answering. Reclaim it.
-    await stopServer(workspace, { reason: "unhealthy" });
+    // Dead, replaced, or not answering. Reclaim it, except that stopServer now
+    // refuses while jobs are live, so a slow server mid-delegation survives.
+    const reclaimed = await stopServer(workspace, { reason: "unhealthy" });
+
+    if (!reclaimed.stopped && reclaimed.reason === ACTIVE_JOBS_REASON) {
+      // Adopt it rather than fight it. A wedged server carrying live jobs is
+      // reconciliation's problem to report, not a reason to destroy work.
+      touch(slug);
+      return existing;
+    }
   }
 
   if (!claimStart(slug, root)) {
@@ -430,7 +458,7 @@ export async function acquireServer(workspace, { attempt = 0 } = {}) {
   return startServer(workspace);
 }
 
-export async function stopServer(workspace, { reason = "requested" } = {}) {
+export async function stopServer(workspace, { reason = "requested", force = false } = {}) {
   const { slug } = workspace;
   const record = readLock(slug);
 
@@ -438,9 +466,30 @@ export async function stopServer(workspace, { reason = "requested" } = {}) {
     return { stopped: false, reason: "no server recorded" };
   }
 
+  // Killing a server ends every session on it, so one with live jobs is spared
+  // unless the caller explicitly forces it. acquireServer used to reach here on
+  // the strength of a single five-second health probe: a server busy indexing
+  // answers in six, and another delegation's in-flight work was force-killed.
+  // Same defect as the sweepServers bug, in the reclaim path.
+  if (!force && record.status === "running" && hasActiveJobs(workspace)) {
+    return { stopped: false, reason: ACTIVE_JOBS_REASON };
+  }
+
   if (record.status === "running" && record.pid) {
     if (looksLikeOurServer(record)) {
-      terminateProcessTree(record.pid, { force: true });
+      const outcome = terminateProcessTree(record.pid, { force: true });
+
+      // The lock is the only record of this pid anywhere. Clearing it after a
+      // failed kill orphans a live, authenticated, write-capable server that
+      // no command can afterwards see or stop.
+      if (!outcome.killed && isAlive(record.pid)) {
+        return {
+          stopped: false,
+          pid: record.pid,
+          reason: `could not be killed (${outcome.reason ?? "unknown"}); its record was kept so it stays visible`
+        };
+      }
+
       clearLock(slug);
       return { stopped: true, pid: record.pid, reason };
     }
@@ -503,7 +552,14 @@ export async function sweep(
   // Defaults to sparing a server, not reaping it. A caller that forgets the
   // guard should fail to clean up, never destroy a running job: that mistake
   // in sweepServers killed a live delegation.
-  { hasRunningJobs = () => true, isOurServer = looksLikeOurServer } = {}
+  {
+    hasRunningJobs = () => true,
+    isOurServer = looksLikeOurServer,
+    // Injectable so a test can exercise the failed-kill branch. Using a real
+    // pid for that is not an option: a test that points the sweep at its own
+    // process kills the test runner, which is how this seam got added.
+    terminate = terminateProcessTree
+  } = {}
 ) {
   const actions = [];
 
@@ -536,7 +592,18 @@ export async function sweep(
 
     const idleMs = Date.now() - Date.parse(record.lastActivityAt ?? record.startedAt ?? 0);
     if (idleMs > IDLE_TTL_MS) {
-      terminateProcessTree(record.pid, { force: true });
+      const outcome = terminate(record.pid, { force: true });
+
+      // Keep the record when the kill failed. Clearing it would leave a live
+      // server with no reference anywhere, invisible to every command.
+      if (!outcome.killed && isAlive(record.pid)) {
+        actions.push({
+          workspace: workspace.root,
+          action: `could not stop idle server pid ${record.pid}; its record was kept so it stays visible`
+        });
+        continue;
+      }
+
       clearLock(workspace.slug);
       actions.push({
         workspace: workspace.root,

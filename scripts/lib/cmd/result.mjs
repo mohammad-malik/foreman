@@ -16,7 +16,7 @@
 
 import { diffAgainstBaseline, diffStat } from "../git-baseline.mjs";
 import { finalAssistantText, OpencodeApi, toolCalls, usageTotals } from "../opencode-api.mjs";
-import { currentServer } from "../servers.mjs";
+import { currentServer, touch } from "../servers.mjs";
 import { describeElapsed, loadJob, markAwaiting, markPolled, updateJob } from "../jobs.mjs";
 import { listWorkspaces } from "../registry.mjs";
 import { bullet, heading, keyValue, untrustedBlock } from "../render.mjs";
@@ -57,6 +57,12 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
   };
 
   if (server) {
+    // Reaching the server is activity. touch() was only called from the
+    // foreground polling loop, and a --background job has no poller, so idle
+    // time was measured from dispatch: a 20 minute background job had its
+    // server reaped in the same sweep that noticed the job had finished.
+    touch(slug);
+
     const api = new OpencodeApi(server, { timeout });
 
     try {
