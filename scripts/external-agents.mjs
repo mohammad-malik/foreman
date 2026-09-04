@@ -165,9 +165,9 @@ const COMMANDS = {
     return 0;
   },
 
-  status: (argv) => {
+  status: async (argv) => {
     const { positionals } = parseArgs(argv, {});
-    process.stdout.write(`${status(positionals[0])}\n`);
+    process.stdout.write(`${await status(positionals[0])}\n`);
     return 0;
   },
 

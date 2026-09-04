@@ -6,8 +6,15 @@ const readOnly = ["doctor", "routes", "workspaces", "servers", "status", "result
 let bad = 0;
 for (const cmd of readOnly) {
   try {
-    execFileSync("node", [runtime, cmd], { stdio: "pipe", timeout: 90000 });
-    console.log("  ok   " + cmd);
+    const out = String(execFileSync("node", [runtime, cmd], { stdio: "pipe", timeout: 90000 }));
+    if (out.includes("[object Promise]")) {
+      // An un-awaited async command prints this instead of its output, and no
+      // unit test notices because the function itself resolves fine.
+      console.log("  CRASH " + cmd + ": printed [object Promise]");
+      bad++;
+    } else {
+      console.log("  ok   " + cmd);
+    }
   } catch (e) {
     const out = String(e.stderr || e.stdout || e.message);
     // A usage or state error is fine; a crash is not.

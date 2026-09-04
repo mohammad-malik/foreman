@@ -44,10 +44,45 @@ function findJobAnywhere(jobID) {
   throw new Error(`No job ${jobID} in any registered workspace.`);
 }
 
-export function status(jobID) {
+/**
+ * Bring active jobs up to date from the server before reporting on them.
+ *
+ * Without this, `status` reconciles local records but never asks the server
+ * anything, so a job that has been blocked on a permission for ten minutes
+ * still reads as "running". That is the difference between "it is working" and
+ * "it has been waiting for you", and it is exactly how a real job was left
+ * blocked until its budget expired.
+ *
+ * Bounded, because status should stay quick: a short per-request timeout and an
+ * overall deadline, after which the remaining jobs are reported from their last
+ * known state rather than making the caller wait.
+ */
+const STATUS_REFRESH_DEADLINE_MS = 6_000;
+const STATUS_REQUEST_TIMEOUT_MS = 2_500;
+
+async function refreshActive(workspaces) {
+  const deadline = Date.now() + STATUS_REFRESH_DEADLINE_MS;
+
+  for (const workspace of workspaces) {
+    for (const job of listJobs(workspace.slug)) {
+      if (!ACTIVE_STATUSES.has(job.status) || Date.now() > deadline) {
+        continue;
+      }
+      try {
+        await collectResult(workspace.slug, job.id, { timeout: STATUS_REQUEST_TIMEOUT_MS });
+      } catch {
+        // Unreachable server or vanished session; reconciliation handles it.
+      }
+    }
+  }
+}
+
+export async function status(jobID) {
   const workspaces = listWorkspaces();
 
   // Never report a job as running when it cannot be.
+  reconcileAll(workspaces);
+  await refreshActive(workspaces);
   reconcileAll(workspaces);
 
   if (jobID) {
