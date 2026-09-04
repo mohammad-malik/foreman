@@ -17,7 +17,7 @@
 import { diffAgainstBaseline, diffStat } from "../git-baseline.mjs";
 import { finalAssistantText, OpencodeApi, toolCalls, usageTotals } from "../opencode-api.mjs";
 import { currentServer } from "../servers.mjs";
-import { describeElapsed, loadJob, markAwaiting, updateJob } from "../jobs.mjs";
+import { describeElapsed, loadJob, markAwaiting, markPolled, updateJob } from "../jobs.mjs";
 import { listWorkspaces } from "../registry.mjs";
 import { bullet, heading, keyValue, untrustedBlock } from "../render.mjs";
 
@@ -133,6 +133,11 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
     job = markAwaiting(job);
     status = "awaiting_permission";
   } else if (status === "running" || status === "queued" || status === "awaiting_permission") {
+    // Nothing is blocked, so this is a clean poll: record it as the bound for
+    // any future wait. See markAwaiting.
+    if (server) {
+      job = markPolled(job);
+    }
     // Text alone is not enough. An assistant message still streaming already
     // has partial text, and settling on it would freeze an incomplete change
     // set and drop the job out of active-server protection while the agent is

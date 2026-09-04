@@ -80,8 +80,17 @@ async function refreshActive(workspaces) {
 export async function status(jobID) {
   const workspaces = listWorkspaces();
 
-  // Never report a job as running when it cannot be.
-  reconcileAll(workspaces);
+  // Refresh BEFORE reconciling, never the other way round.
+  //
+  // Reconciliation applies the budget. Running it first meant a job that had
+  // raised a permission request since its last poll, and whose budget had
+  // elapsed, was failed as a runaway before anything asked the server whether
+  // it was actually blocked. refreshActive then skipped it for being terminal,
+  // and permit ignored it for the same reason, so the request could never be
+  // answered and the job was unrecoverable.
+  //
+  // Refreshing first means a blocked job is stamped as blocked, which stops
+  // its budget, so the reconcile that follows sees the truth.
   await refreshActive(workspaces);
   reconcileAll(workspaces);
 

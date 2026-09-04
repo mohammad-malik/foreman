@@ -187,12 +187,35 @@ export function blockedMs(job) {
   return blocked;
 }
 
-/** Stamp the moment a job started waiting for an answer. Idempotent. */
+/**
+ * Stamp when a job started waiting for an answer. Idempotent.
+ *
+ * The stamp is the last moment the job was KNOWN to be working, not the moment
+ * a poll happened to notice it was blocked. Those differ by however long it
+ * went unpolled, and the difference is not small: a real job waited about 25
+ * minutes and was credited 26 seconds, because a poll found it just before the
+ * answer arrived. The request was raised somewhere between the last clean poll
+ * and now, so crediting from the last clean poll is the most generous bound the
+ * evidence supports. It errs toward not killing a job, which is the direction
+ * to err in.
+ */
 export function markAwaiting(job) {
   if (job.awaitingSince) {
     return job;
   }
-  return updateJob(job, { status: "awaiting_permission", awaitingSince: new Date().toISOString() });
+
+  const since = job.lastPolledAt ?? new Date().toISOString();
+  return updateJob(job, { status: "awaiting_permission", awaitingSince: since });
+}
+
+/**
+ * Record that a poll found this job working rather than blocked.
+ *
+ * This is the bound markAwaiting uses. Without it there is no evidence of when
+ * waiting began, only of when it was discovered.
+ */
+export function markPolled(job) {
+  return updateJob(job, { lastPolledAt: new Date().toISOString() });
 }
 
 /** Fold the wait into blockedMs and resume. */
@@ -204,6 +227,8 @@ export function markResumed(job) {
   return updateJob(job, {
     status: "running",
     awaitingSince: null,
+    // Work resumes now, so this is also the last moment it was known working.
+    lastPolledAt: new Date().toISOString(),
     blockedMs: (job.blockedMs ?? 0) + extra
   });
 }

@@ -32,8 +32,10 @@ export async function notify() {
   // that no resident process is left alive to do. Reconcile first: a stranded
   // job would otherwise look like live work and keep its server from ever
   // being swept.
-  reconcileAll(workspaces);
-
+  // Poll BEFORE reconciling, for the same reason status does: reconciliation
+  // applies the budget, and a job blocked since its last poll would be failed
+  // as a runaway before anything discovered it was waiting on a person.
+  //
   // Poll everything still running BEFORE deciding what to report. Nothing else
   // advances a backgrounded job: `--background` returns immediately and leaves
   // no waiter behind, so without this the job sits at "running" until
@@ -60,6 +62,7 @@ export async function notify() {
     }
   }
 
+  reconcileAll(workspaces);
   await sweep(workspaces, { hasRunningJobs: hasActiveJobs }).catch(() => []);
 
   const pending = unreportedJobs(workspaces);
