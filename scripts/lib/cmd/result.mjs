@@ -15,7 +15,7 @@
  */
 
 import { diffAgainstBaseline, diffStat } from "../git-baseline.mjs";
-import { judgeCodexJob, readCodexJob } from "../codex-job.mjs";
+import { isStalled, judgeCodexJob, readCodexJob } from "../codex-job.mjs";
 import { finalAssistantText, OpencodeApi, toolCalls, usageTotals } from "../opencode-api.mjs";
 import { currentServer, touch } from "../servers.mjs";
 import {
@@ -196,6 +196,14 @@ function collectCodexResult(job) {
 
   if (state.stderr) {
     collected.warnings.push(`codex wrote to stderr: ${state.stderr.slice(0, 500)}`);
+  }
+
+  if (state.alive && state.silent) {
+    collected.warnings.push(
+      isStalled(job, state)
+        ? "codex has produced no output at all and is being treated as stuck, not busy."
+        : "codex has produced no output yet. A working run says something within seconds, so if this persists it is stuck rather than thinking."
+    );
   }
 
   // A job the user already cancelled, or one reconciliation already failed,

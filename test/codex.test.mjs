@@ -190,3 +190,22 @@ test("text without a completed turn is not a success", () => {
   assert.equal(judged.status, "failed");
   assert.match(judged.error, /before reporting the turn as complete/);
 });
+
+test("a live process that has written nothing is stuck, not busy", async () => {
+  const { isStalled, SILENT_GRACE_MS } = await import("../scripts/lib/codex-job.mjs");
+  const started = new Date(Date.now() - SILENT_GRACE_MS - 1000).toISOString();
+
+  // The incident this comes from: a shim on PATH that could not be spawned
+  // detached, so codex started, blocked, and wrote nothing for twenty minutes
+  // while the job read as "running".
+  assert.equal(isStalled({ startedAt: started }, { alive: true, silent: true }), true);
+
+  // Everything else is a normal run and must not be failed.
+  assert.equal(isStalled({ startedAt: started }, { alive: true, silent: false }), false);
+  assert.equal(isStalled({ startedAt: started }, { alive: false, silent: true }), false);
+  assert.equal(
+    isStalled({ startedAt: new Date().toISOString() }, { alive: true, silent: true }),
+    false
+  );
+  assert.equal(isStalled({ startedAt: "not a date" }, { alive: true, silent: true }), false);
+});

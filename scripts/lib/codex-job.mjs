@@ -103,10 +103,11 @@ export function startCodexJob({ slug, jobID, model, root, task, write }) {
  */
 export function readCodexJob(job) {
   const files = codexJobFiles(job.slug, job.id);
+  const logPath = job.logFile ?? files.logFile;
 
   let log = "";
   try {
-    log = fs.readFileSync(job.logFile ?? files.logFile, "utf8");
+    log = fs.readFileSync(logPath, "utf8");
   } catch {
     // Not started yet, or the state directory was cleared.
   }
@@ -133,8 +134,42 @@ export function readCodexJob(job) {
     // The message file is the CLI's own statement of its final answer, so it
     // wins over the text scraped from the event stream.
     finalText: lastMessage || parsed.finalText,
-    stderr
+    stderr,
+    // A live process that has written nothing is the one failure this backend
+    // cannot see any other way. See isStalled.
+    silent: log.length === 0
   };
+}
+
+/**
+ * How long a Codex process may run without emitting a single event before it is
+ * treated as stuck rather than busy.
+ *
+ * A working run writes `thread.started` within a few seconds, every time. The
+ * number is generous anyway because the cost of being wrong in one direction is
+ * a confusing early failure and in the other is silence.
+ */
+export const SILENT_GRACE_MS = 5 * 60 * 1000;
+
+/**
+ * A process that is alive, and has produced nothing at all, for longer than any
+ * working run takes to say hello.
+ *
+ * This exists because of a real incident: a `codex` on PATH that was a shim
+ * around the real binary could not be spawned detached on Windows, so the
+ * process started, blocked forever, wrote nothing, and burned 0.06 seconds of
+ * CPU over twenty minutes while the job sat at "running". Nothing in the record
+ * distinguished that from a model thinking hard. Now something does.
+ */
+export function isStalled(job, state, now = Date.now()) {
+  if (!state.alive || !state.silent) {
+    return false;
+  }
+  const started = Date.parse(job.startedAt ?? job.createdAt ?? "");
+  if (Number.isNaN(started)) {
+    return false;
+  }
+  return now - started > SILENT_GRACE_MS;
 }
 
 /**

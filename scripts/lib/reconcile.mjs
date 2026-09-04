@@ -16,7 +16,7 @@
  * possibly still be running, never merely because it is slow.
  */
 
-import { judgeCodexJob, readCodexJob } from "./codex-job.mjs";
+import { isStalled, judgeCodexJob, readCodexJob, SILENT_GRACE_MS } from "./codex-job.mjs";
 import { ACTIVE_STATUSES, elapsedMs, listJobs, updateJob } from "./jobs.mjs";
 import { currentServer } from "./servers.mjs";
 
@@ -55,6 +55,22 @@ export function reconcileWorkspace(workspace) {
     // where a background Codex job reaches a terminal state.
     if (job.backend === "codex") {
       const state = readCodexJob(job);
+
+      if (isStalled(job, state)) {
+        changed.push(
+          updateJob(job, {
+            status: "failed",
+            finishedAt: new Date().toISOString(),
+            error: [
+              `codex started (pid ${job.pid}) but produced no output in ${Math.round(SILENT_GRACE_MS / 60000)} minutes, so it is stuck rather than working.`,
+              "A working run emits its first event within seconds. This is what a `codex` on PATH that cannot be spawned detached looks like: a wrapper or shim rather than the real binary.",
+              "Check `codex --version` runs, and set EXTERNAL_AGENTS_CODEX_BIN to the real executable if PATH resolves to a shim."
+            ].join(" ")
+          })
+        );
+        continue;
+      }
+
       if (!state.alive) {
         const judged = judgeCodexJob(job, state);
         changed.push(
