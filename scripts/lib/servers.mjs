@@ -395,13 +395,20 @@ export function touch(slug) {
  * Get a healthy server for this workspace, starting one if needed.
  * Safe to call concurrently from separate sessions.
  */
+const ACQUIRE_RETRY_MS = 500;
+// The waiting session must be patient for at least as long as the winning one
+// is allowed to take. Giving up sooner turns an ordinary cold start into a
+// spurious failure in whichever session happened to arrive second.
+const MAX_ACQUIRE_ATTEMPTS = Math.ceil(START_TIMEOUT_MS / ACQUIRE_RETRY_MS) + 4;
+
 export async function acquireServer(workspace, { attempt = 0 } = {}) {
   const { slug, root } = workspace;
 
-  if (attempt > 12) {
-    throw new OpencodeError("Gave up waiting for an OpenCode server to become available.", {
-      code: "server_acquire_timeout"
-    });
+  if (attempt > MAX_ACQUIRE_ATTEMPTS) {
+    throw new OpencodeError(
+      `Gave up after ${Math.round((MAX_ACQUIRE_ATTEMPTS * ACQUIRE_RETRY_MS) / 1000)}s waiting for another session's OpenCode server to finish starting.`,
+      { code: "server_acquire_timeout" }
+    );
   }
 
   const existing = readLock(slug);
@@ -416,7 +423,7 @@ export async function acquireServer(workspace, { attempt = 0 } = {}) {
   }
 
   if (!claimStart(slug, root)) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, ACQUIRE_RETRY_MS));
     return acquireServer(workspace, { attempt: attempt + 1 });
   }
 

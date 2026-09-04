@@ -135,8 +135,20 @@ export function captureBaseline(root) {
   const status = parseStatusZ(git(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]));
 
   const hashes = Object.create(null);
+  const contents = Object.create(null);
+
   for (const entry of status) {
-    hashes[entry.path] = hashFile(path.join(root, entry.path));
+    const absolute = path.join(root, entry.path);
+    hashes[entry.path] = hashFile(absolute);
+
+    // Keep the content of files that were already dirty, so revert can put
+    // them back. Without this an untracked file that existed before the job
+    // has nothing to restore from, and the only options are to delete it
+    // (losing the user's work) or leave the agent's edit in place.
+    const stored = readForRestore(absolute);
+    if (stored !== null) {
+      contents[entry.path] = stored;
+    }
   }
 
   return {
@@ -145,8 +157,30 @@ export function captureBaseline(root) {
     capturedAt: new Date().toISOString(),
     dirty: status.length > 0,
     status,
-    hashes
+    hashes,
+    contents
   };
+}
+
+/**
+ * Base64 of a file small enough to keep a copy of.
+ *
+ * Capped because this lands in a job record: a repository with a large
+ * uncommitted asset should not push a hundred megabytes into plugin state.
+ * Anything over the cap is reported as unrevertable rather than deleted.
+ */
+const RESTORE_SIZE_CAP = 1024 * 1024;
+
+function readForRestore(absolutePath) {
+  try {
+    const stat = fs.statSync(absolutePath);
+    if (!stat.isFile() || stat.size > RESTORE_SIZE_CAP) {
+      return null;
+    }
+    return fs.readFileSync(absolutePath).toString("base64");
+  } catch {
+    return null;
+  }
 }
 
 export function describeDirty(baseline, limit = 10) {
@@ -227,8 +261,28 @@ export function revertPaths(root, baseline, changed) {
   const removed = [];
   const skipped = [];
 
+  // Anything dirty when the baseline was taken already existed. Deleting it
+  // would destroy the user's own uncommitted work, so those paths are restored
+  // from the stored copy and never removed.
+  const preExisting = new Set(baseline.status.map((entry) => entry.path));
+
   for (const entry of changed) {
     const absolute = path.join(root, entry.path);
+
+    if (preExisting.has(entry.path)) {
+      const stored = baseline.contents?.[entry.path];
+      if (stored === undefined) {
+        skipped.push({
+          path: entry.path,
+          reason: "it had uncommitted changes before the job and was too large to keep a copy of"
+        });
+        continue;
+      }
+      fs.mkdirSync(path.dirname(absolute), { recursive: true });
+      fs.writeFileSync(absolute, Buffer.from(stored, "base64"));
+      restored.push(entry.path);
+      continue;
+    }
 
     // cat-file -e is the existence test. It has to be checked by exit status
     // rather than output, because it prints nothing on success.

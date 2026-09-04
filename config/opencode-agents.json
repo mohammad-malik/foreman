@@ -1,10 +1,7 @@
 {
   "subagent_depth": 1,
-
   "//": "Two agents, not three. A `glm-explore` child agent was written and removed: OpenCode 1.18.16 offers no subagent-delegation tool over the server API. Even the built-in `build` agent lists only apply_patch, bash, edit, glob, grep, question, read, skill, todowrite, webfetch and websearch, so there is nothing for a parent to delegate through. Setting `permission.task` or `tools.task` changes nothing. subagent_depth is kept at 1 so nested agents stay capped if a later version enables them. The child-session discovery in the runtime is also kept: it reports what actually ran rather than what an agent claims, and returns an empty list until this works.",
-
-  "//permissions": "`permission` is the real enforcement, verified by testing: a read-only agent told to write a file had its edit denied, fell back to `echo BREACH > file` in bash, and was stopped by the bash allowlist pending a human answer. The catch-all bash rule is `ask` rather than `deny` because no pattern reliably separates a shell command that writes from one that reads, so a person decides.",
-
+  "//permissions": "`permission` is the real enforcement, verified by testing: a read-only agent told to write a file had its edit denied, fell back to `echo BREACH > file` in bash, and was stopped by the bash allowlist pending a human answer. ORDER MATTERS: OpenCode resolves the LAST matching bash rule, so the catch-all `*` must come FIRST. With it trailing, `git status --short` still prompted despite an explicit allow, and every deny below it was downgraded to ask, which quietly made `git push` and `curl` user-approvable. The catch-all is `ask` rather than `deny` because no pattern reliably separates a shell command that writes from one that reads, so a person decides.",
   "agent": {
     "external-builder": {
       "description": "Primary external worker with write access inside one repository.",
@@ -20,6 +17,7 @@
         "webfetch": "deny",
         "websearch": "deny",
         "bash": {
+          "*": "ask",
           "git status*": "allow",
           "git diff*": "allow",
           "git log*": "allow",
@@ -44,12 +42,10 @@
           "npm publish*": "deny",
           "kill*": "deny",
           "taskkill*": "deny",
-          "shutdown*": "deny",
-          "*": "ask"
+          "shutdown*": "deny"
         }
       }
     },
-
     "external-researcher": {
       "description": "Read-only external worker. Investigates and reports, never edits.",
       "mode": "primary",
@@ -64,6 +60,7 @@
         "webfetch": "deny",
         "websearch": "deny",
         "bash": {
+          "*": "ask",
           "git status*": "allow",
           "git diff*": "allow",
           "git log*": "allow",
@@ -72,8 +69,7 @@
           "ls*": "allow",
           "cat*": "allow",
           "rg*": "allow",
-          "find*": "allow",
-          "*": "ask"
+          "find*": "allow"
         }
       }
     }

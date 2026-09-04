@@ -12,7 +12,7 @@
  */
 
 import { listWorkspaces } from "../registry.mjs";
-import { hasActiveJobs, markReported, unreportedJobs } from "../jobs.mjs";
+import { activeJobs, hasActiveJobs, markReported, unreportedJobs } from "../jobs.mjs";
 import { reconcileAll } from "../reconcile.mjs";
 import { sweep } from "../servers.mjs";
 import { collectResult } from "./result.mjs";
@@ -28,6 +28,22 @@ export async function notify() {
   // job would otherwise look like live work and keep its server from ever
   // being swept.
   reconcileAll(workspaces);
+
+  // Poll everything still running BEFORE deciding what to report. Nothing else
+  // advances a backgrounded job: `--background` returns immediately and leaves
+  // no waiter behind, so without this the job sits at "running" until
+  // reconciliation eventually fails it at its budget. That would make the
+  // headline feature quietly useless.
+  for (const workspace of workspaces) {
+    for (const job of activeJobs(workspace.slug)) {
+      try {
+        await collectResult(workspace.slug, job.id);
+      } catch {
+        // Unreachable server or a vanished session. Reconciliation handles it.
+      }
+    }
+  }
+
   await sweep(workspaces, { hasRunningJobs: hasActiveJobs }).catch(() => []);
 
   const pending = unreportedJobs(workspaces);

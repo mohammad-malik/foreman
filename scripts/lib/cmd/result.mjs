@@ -40,6 +40,10 @@ export async function collectResult(slug, jobID) {
   const workspace = workspaceFor(slug);
   const server = workspace ? currentServer(workspace) : null;
 
+  // Whether the agent's current turn is actually over, as opposed to a
+  // message that merely has some text in it so far.
+  let turnFinished = false;
+
   const collected = {
     finalText: job.result?.finalText ?? null,
     children: job.result?.children ?? [],
@@ -55,6 +59,7 @@ export async function collectResult(slug, jobID) {
 
     try {
       const messages = await api.messages(job.sessionID);
+      turnFinished = (await api.turnState(job.sessionID)).state === "idle";
       collected.finalText = finalAssistantText(messages) ?? collected.finalText;
       collected.tools = toolCalls(messages);
 
@@ -94,6 +99,9 @@ export async function collectResult(slug, jobID) {
     collected.warnings.push(
       "The OpenCode server for this workspace is no longer running, so this is the last state that was recorded."
     );
+    // Nothing can advance without a server, so whatever was captured before it
+    // stopped is final. Reconciliation decides whether that counts as failure.
+    turnFinished = Boolean(collected.finalText);
   }
 
   let changes = job.changes ?? null;
@@ -119,12 +127,19 @@ export async function collectResult(slug, jobID) {
   let status = job.status;
   if (collected.pendingPermissions.length > 0) {
     status = "awaiting_permission";
-  } else if (status === "running" || status === "queued") {
-    status = collected.finalText ? "completed" : status;
+  } else if (status === "running" || status === "queued" || status === "awaiting_permission") {
+    // Text alone is not enough. An assistant message still streaming already
+    // has partial text, and settling on it would freeze an incomplete change
+    // set and drop the job out of active-server protection while the agent is
+    // still editing. The turn must actually be finished.
+    status = turnFinished && collected.finalText ? "completed" : "running";
   }
 
-  const finishedAt =
-    status === "completed" || status === "failed" ? (job.finishedAt ?? new Date().toISOString()) : null;
+  // Cancelled belongs here too. Without it a cancelled job never gets a
+  // finishedAt, so its elapsed time grows forever and its change set is
+  // recomputed against edits that have nothing to do with it.
+  const isTerminal = status === "completed" || status === "failed" || status === "cancelled";
+  const finishedAt = isTerminal ? (job.finishedAt ?? new Date().toISOString()) : null;
 
   return updateJob(job, { status, finishedAt, result: collected, changes });
 }
