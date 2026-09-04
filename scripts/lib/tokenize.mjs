@@ -156,11 +156,31 @@ export function normalizeArgv(argv) {
  * genuinely named `app --force` is ambiguous no matter what, and resolving it
  * toward "flag" is the reading a person almost always means.
  */
-export function extractPath(raw, knownFlags = []) {
+export function extractPath(raw, knownFlags = [], argv = null) {
   const flags = new Set(knownFlags.map((flag) => (flag.startsWith("--") ? flag : `--${flag}`)));
   const found = new Set();
 
-  let rest = typeof raw === "string" ? raw : "";
+  // No raw string means the arguments arrived as real argv, where the shell
+  // already established the boundaries correctly. Rescanning a reconstructed
+  // string would destroy them, so the parsed form is used as-is: a quoted path
+  // containing spaces is one entry and needs no reassembly.
+  if (typeof raw !== "string") {
+    const tokens = Array.isArray(argv) ? argv : [];
+    let path;
+
+    for (const token of tokens) {
+      const named = token.startsWith("--") ? token : null;
+      if (named && flags.has(named)) {
+        found.add(named.slice(2));
+      } else if (!named && path === undefined) {
+        path = token;
+      }
+    }
+
+    return { path: path === "" ? undefined : path, flags: found };
+  }
+
+  let rest = raw;
 
   for (;;) {
     const trimmed = rest.replace(/\s+$/u, "");
@@ -203,7 +223,17 @@ export function extractPath(raw, knownFlags = []) {
  * caller can default. `rest` is argv with the option and its value removed.
  */
 export function extractOption(argv, raw, name, knownFlags = []) {
-  const source = typeof raw === "string" ? raw : "";
+  // No raw string means real argv, whose boundaries the shell already got
+  // right. Scanning a reconstructed string here dispatched a write job to the
+  // wrong repository: a task describing the `--dir` option was one argv entry,
+  // joining flattened it, and the option was read out of the prose. So when
+  // there is no genuine single-string form, the parsed value is the only
+  // reading, and the caller falls back to it.
+  if (typeof raw !== "string") {
+    return { value: undefined, rest: Array.isArray(argv) ? argv : [] };
+  }
+
+  const source = raw;
   const marker = `--${name}`;
   const known = new Set(knownFlags.map((flag) => (flag.startsWith("--") ? flag : `--${flag}`)));
 

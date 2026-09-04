@@ -87,7 +87,7 @@ const COMMANDS = {
     // Read from the raw string rather than parsed tokens. A path is never
     // reassembled from pieces, so `C:\My  Projects` keeps both spaces and
     // `C:\Users\O'Brien` keeps its apostrophe.
-    const { path, flags } = extractPath(raw, ["allow-external", "force"]);
+    const { path, flags } = extractPath(raw, ["allow-external", "force"], argv);
     process.stdout.write(
       `${register(path, {
         allowExternal: flags.has("allow-external"),
@@ -98,7 +98,7 @@ const COMMANDS = {
   },
 
   unregister: (argv, raw) => {
-    process.stdout.write(`${unregister(extractPath(raw).path)}\n`);
+    process.stdout.write(`${unregister(extractPath(raw, [], argv).path)}\n`);
     return 0;
   },
 
@@ -108,12 +108,12 @@ const COMMANDS = {
   },
 
   "server-start": async (argv, raw) => {
-    process.stdout.write(`${await serverStart(extractPath(raw).path)}\n`);
+    process.stdout.write(`${await serverStart(extractPath(raw, [], argv).path)}\n`);
     return 0;
   },
 
   "server-stop": async (argv, raw) => {
-    process.stdout.write(`${await serverStop(extractPath(raw).path)}\n`);
+    process.stdout.write(`${await serverStop(extractPath(raw, [], argv).path)}\n`);
     return 0;
   },
 
@@ -226,6 +226,18 @@ async function main() {
   const [name, ...rest] = process.argv.slice(2);
   const argv = normalizeArgv(rest);
 
+  // The raw string is offered to a command ONLY when it genuinely arrived as
+  // one entry. Reconstructing it with rest.join(" ") when real argv is present
+  // destroys the argument boundaries the shell already got right, and a value
+  // containing a flag then reads as that flag.
+  //
+  // This is not hypothetical. Delegating a task whose text described the
+  // `--dir` option dispatched a WRITE job to the wrong repository: the task
+  // was one argv entry, joining flattened it, and `--dir` was read out of the
+  // prose instead of from the option. A parsing shortcut that can redirect
+  // writes across repositories is not a shortcut worth having.
+  const raw = rest.length === 1 ? rest[0] : null;
+
   if (!name || name === "help" || name === "--help" || name === "-h") {
     process.stdout.write(USAGE);
     return 0;
@@ -237,7 +249,7 @@ async function main() {
     return 2;
   }
 
-  return await command(argv, rest.join(" "));
+  return await command(argv, raw);
 }
 
 try {
