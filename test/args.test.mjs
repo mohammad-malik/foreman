@@ -47,3 +47,10 @@ test("rejects a value option with no value", () => {
   assert.throws(() => parseArgs(["--model"], SPEC), /needs a value/);
   assert.throws(() => parseArgs(["--model", "--"], SPEC), /needs a value/);
 });
+
+test("a repeated value option is last-one-wins", () => {
+  // Callers may layer defaults (e.g. a global alias) before user-supplied
+  // flags; silently keeping the first value would make overrides impossible.
+  const { options } = parseArgs(["--model", "kimi", "--model", "glm"], SPEC);
+  assert.equal(options.model, "glm");
+});
