@@ -9,6 +9,8 @@
  */
 
 import assert from "node:assert/strict";
+import { execFileSync, spawn } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -137,14 +139,14 @@ test("a live process with an unfinished turn is running", () => {
   assert.equal(judged.status, "running");
 });
 
-test("a finished turn settles the job even if the pid still looks alive", () => {
+test("a finished turn settles the job when the live pid belongs to something else", () => {
   // A PID is a weak reference: on a long-lived machine the number is recycled,
   // and a completed job whose number landed on something else would otherwise
-  // read as running until its budget expired. The log is the better witness,
-  // because nothing is written after turn.completed.
+  // read as running until its budget expired.
   const judged = judgeCodexJob(
     { pid: 1 },
-    { alive: true, parsed: parseEventLog(LOG), finalText: "Appended probe.", stderr: "" }
+    { alive: true, parsed: parseEventLog(LOG), finalText: "Appended probe.", stderr: "" },
+    () => false
   );
 
   assert.equal(judged.status, "completed");
@@ -243,7 +245,7 @@ test("a live process that has written nothing is stuck, not busy", async () => {
   assert.equal(isStalled({ startedAt: "not a date" }, { alive: true, silent: true }), false);
 });
 
-test("a failed turn is terminal, even on a pid that still looks alive", () => {
+test("a failed turn is terminal on a recycled pid", () => {
   // The completed case was fixed for recycled pids and this one was not, so an
   // explicit turn.failure sat at "running" until the budget expired.
   const judged = judgeCodexJob(
@@ -253,9 +255,86 @@ test("a failed turn is terminal, even on a pid that still looks alive", () => {
       parsed: parseEventLog('{"type":"turn.failed","error":{"message":"429 rate limited"}}'),
       finalText: null,
       stderr: ""
-    }
+    },
+    () => false
   );
 
   assert.equal(judged.status, "failed");
   assert.equal(judged.error, "429 rate limited");
 });
+
+test("ended turns wait for their own process, including failure and missing text", () => {
+  for (const log of [LOG, '{"type":"turn.failed","error":{"message":"failed"}}', '{"type":"turn.completed"}']) {
+    const parsed = parseEventLog(log);
+    const state = { alive: true, parsed, finalText: parsed.finalText, stderr: "" };
+    let checks = 0;
+    const matches = () => { checks++; return true; };
+    assert.equal(judgeCodexJob({}, state, matches).status, "running");
+    assert.equal(judgeCodexJob({}, state, matches).status, "running");
+    assert.equal(checks, 2);
+    assert.equal(judgeCodexJob({}, state, () => false).status, log === LOG ? "completed" : "failed");
+  }
+});
+
+test("ordinary running polls and exited processes need no identity subprocess", () => {
+  const unexpected = () => assert.fail("unnecessary identity check");
+  assert.equal(judgeCodexJob({}, {
+    alive: true, parsed: parseEventLog(""), finalText: null, stderr: ""
+  }, unexpected).status, "running");
+  assert.equal(judgeCodexJob({}, {
+    alive: false, parsed: parseEventLog(LOG), finalText: "done", stderr: ""
+  }, unexpected).status, "completed");
+});
+
+for (const reconcile of [false, true]) {
+  test(`late process writes are reported and reverted${reconcile ? " after reconciliation" : " by result polling"}`, async (t) => {
+    const { createJob, updateJob, loadJob } = await import("../scripts/lib/jobs.mjs");
+    const { captureBaseline, revertPaths } = await import("../scripts/lib/git-baseline.mjs");
+    const { collectResult } = await import("../scripts/lib/cmd/result.mjs");
+    const { reconcileWorkspace } = await import("../scripts/lib/reconcile.mjs");
+    const root = fs.mkdtempSync(path.join(SCRATCH, "repo-"));
+    execFileSync("git", ["init", root], { stdio: "ignore", windowsHide: true });
+    const workspace = { root, slug: path.basename(root) };
+    let job = createJob(workspace, { backend: "codex", status: "running", baseline: captureBaseline(root) });
+    const files = codexJobFiles(job.slug, job.id);
+    // The child announces turn completion, then waits for permission to write
+    // another file. This reproduces the lost-edit incident without timing sleeps.
+    const child = spawn(process.execPath, ["-e", `
+      const fs = require("node:fs");
+      const [root, log, message, events] = process.argv.slice(1);
+      fs.writeFileSync(root + "/early.txt", "early");
+      fs.writeFileSync(log, events);
+      fs.writeFileSync(message, "done");
+      process.send("ready");
+      process.on("message", () => {
+        fs.writeFileSync(root + "/late.txt", "late");
+        process.disconnect();
+      });
+    `, root, files.logFile, files.messageFile, LOG], {
+      stdio: ["ignore", "ignore", "inherit", "ipc"], windowsHide: true
+    });
+    const exited = once(child, "exit");
+    t.after(async () => { if (child.exitCode === null) child.kill(); await exited; });
+    await once(child, "message");
+    job = updateJob(job, { pid: child.pid, ...files });
+    let result = await collectResult(job.slug, job.id);
+    assert.equal(result.status, "running");
+    assert.equal(result.finishedAt, null);
+    assert.deepEqual(result.changes.changed.map(entry => entry.path), ["early.txt"]);
+    assert.deepEqual(reconcileWorkspace(workspace), []);
+    child.send("finish");
+    await exited;
+    if (reconcile) {
+      reconcileWorkspace(workspace);
+      assert.equal(loadJob(job.slug, job.id).status, "completed");
+    }
+    result = await collectResult(job.slug, job.id);
+    assert.equal(result.status, "completed");
+    assert.ok(result.finishedAt);
+    assert.deepEqual(result.changes.changed.map(entry => entry.path), ["early.txt", "late.txt"]);
+    revertPaths(root, result.baseline, result.changes.changed);
+    assert.equal(fs.existsSync(path.join(root, "early.txt")), false);
+    assert.equal(fs.existsSync(path.join(root, "late.txt")), false);
+    assert.deepEqual((await collectResult(job.slug, job.id)).changes, result.changes);
+  });
+}

@@ -1,6 +1,6 @@
 {
   "name": "external-agents",
-  "version": "1.10.0",
+  "version": "1.11.0",
   "description": "Delegate a task to a non-Claude model through OpenCode, then verify the result against git.",
   "author": {
     "name": "Mohammad Malik"

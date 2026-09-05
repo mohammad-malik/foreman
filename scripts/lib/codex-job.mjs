@@ -126,8 +126,7 @@ export function startCodexJob({ slug, jobID, model, root, task, write }) {
  * The check is exact and free of guesswork: every job passes
  * `--output-last-message <state dir>/codex/<job id>/last-message.txt`, so its
  * own id is in its command line and nothing else's is. Reading a command line
- * costs a subprocess, so this is called where a wrong answer matters, not in a
- * polling loop.
+ * costs a subprocess, so ordinary polls defer it until the turn ends.
  */
 export function processMatchesJob(job, readCommandLine = processCommandLine) {
   const line = readCommandLine(job.pid);
@@ -141,9 +140,9 @@ export function processMatchesJob(job, readCommandLine = processCommandLine) {
  * Read what a Codex job has produced so far.
  *
  * Works while it runs and after it has gone, because everything is read off
- * disk. `alive` is the authority on whether it is still going: the event log
- * having a `turn.completed` in it means the model finished its turn, not that
- * the process has exited.
+ * disk. A live PID still needs an identity check before settling: the event
+ * log having a `turn.completed` in it means the model finished its turn, not
+ * that the process has exited.
  */
 export function readCodexJob(job) {
   const files = codexJobFiles(job.slug, job.id);
@@ -223,12 +222,16 @@ export function isStalled(job, state, now = Date.now()) {
  * finished process without them is a failure, and the reason is taken from the
  * event log's own error events or from stderr rather than invented here.
  */
-export function judgeCodexJob(job, state) {
-  // Both checked BEFORE liveness. A turn that has ended is a finished job
-  // whatever the process table says, and asking the log first is what stops a
-  // recycled PID holding a settled job at "running" until its budget runs out.
-  // Nothing is written after the turn ends: edits land as patch events before
-  // it, and the message file is the last thing codex does.
+export function judgeCodexJob(job, state, matchesJob = processMatchesJob) {
+  // turn.completed once froze the result while codex was still writing files,
+  // leaving late edits out of both the report and revert. Wait for our process
+  // to exit, but check identity: recycled PIDs previously kept settled jobs
+  // running until their budget expired. A lingering process must be checked
+  // again on later polls because its PID can be recycled after this check.
+  if (state.alive && (!state.parsed.turnDone || matchesJob(job))) {
+    return { status: "running", error: null };
+  }
+
   if (state.parsed.turnDone && state.finalText && state.parsed.errors.length === 0) {
     return { status: "completed", error: null };
   }
@@ -239,10 +242,6 @@ export function judgeCodexJob(job, state) {
   // completed case and was missed because the fix only covered success.
   if (state.parsed.turnDone && state.parsed.errors.length > 0) {
     return { status: "failed", error: state.parsed.errors[0] };
-  }
-
-  if (state.alive) {
-    return { status: "running", error: null };
   }
 
   const reason =

@@ -63,10 +63,9 @@ export function reconcileWorkspace(workspace) {
       let state = readCodexJob(job);
 
       // A live-looking PID that is not this job's codex is a recycled number,
-      // so the job is judged as the finished thing it is. Only asked here,
-      // where reconciliation already runs at human pace, and only once the
-      // process has been quiet long enough that being wrong would matter:
-      // reading a command line costs a subprocess.
+      // so the job is judged as the finished thing it is. Unfinished turns
+      // get this check after the grace period; judgeCodexJob checks ended
+      // turns before allowing their change sets to freeze.
       if (state.alive && !state.parsed.turnDone && elapsed > SILENT_GRACE_MS) {
         if (!processMatchesJob(job)) {
           state = { ...state, alive: false };
@@ -88,12 +87,15 @@ export function reconcileWorkspace(workspace) {
         continue;
       }
 
-      if (!state.alive) {
-        const judged = judgeCodexJob(job, state);
+      const judged = judgeCodexJob(job, state);
+      if (judged.status !== "running") {
         changed.push(
           updateJob(job, {
             status: judged.status,
             finishedAt: new Date().toISOString(),
+            // A poll before exit may have captured only some edits. Let result
+            // collect the final diff before freezing it for report and revert.
+            changes: null,
             error: judged.error
           })
         );
