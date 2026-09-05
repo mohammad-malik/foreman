@@ -110,6 +110,13 @@ RUNTIME wait --timeout 3600
 
 Blocks until every active job settles. Do not poll in a loop.
 
+**Start this in the same turn as the dispatch, before saying anything about
+waiting.** A dispatched job with nothing watching it is not being waited on, and
+the notification that reaches you comes from this command finishing, not from
+the job. Twice now a job has been described as "waiting" while nothing was: once
+it sat on an unanswered permission for 25 minutes. If you are about to write the
+word "waiting", this call goes first.
+
 It returns early if a job needs a permission answered, naming what it wants.
 Show the user the `permit` line. Approving is their call, not yours — except
 where they have already told you to approve a specific thing, such as running
