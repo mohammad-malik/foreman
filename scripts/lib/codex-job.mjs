@@ -23,7 +23,13 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { codexBinary, execArgs, parseEventLog, sandboxFor } from "./codex.mjs";
-import { isAlive, processCommandLine, terminateProcessTree } from "./process.mjs";
+import { spawnHiddenDetached } from "./hidden-spawn.mjs";
+import {
+  findPidsByCommandLine,
+  isAlive,
+  processCommandLine,
+  terminateProcessTree
+} from "./process.mjs";
 import { workspaceStateDir } from "./state.mjs";
 
 /** Per-job scratch directory, outside the repository. */
@@ -57,6 +63,19 @@ export function startCodexJob({ slug, jobID, model, root, task, write }) {
   fs.writeFileSync(files.taskFile, task, "utf8");
 
   const args = execArgs({ model, root, write, messageFile: files.messageFile });
+
+  // Windows takes the launcher, which is the only way to get a process that
+  // shows no window, keeps its descendants windowless, and still outlives this
+  // one. See hidden-spawn.mjs. POSIX has no such problem and keeps the plain
+  // detached spawn below.
+  if (process.platform === "win32") {
+    return {
+      pid: startHiddenCodex({ files, args, root, jobID }),
+      sandbox: sandboxFor({ write }),
+      command: `${codexBinary()} ${args.join(" ")}`,
+      ...files
+    };
+  }
 
   // Descriptors are opened before the spawn so a failure to open is reported
   // here rather than silently losing the log of a job that is already running.
@@ -134,6 +153,37 @@ export function processMatchesJob(job, readCommandLine = processCommandLine) {
     return false;
   }
   return line.includes(job.id);
+}
+
+/**
+ * The Windows launch path. Throws with a stated reason rather than returning a
+ * job that was never started: delegate turns that into a failed record.
+ */
+function startHiddenCodex({ files, args, root, jobID }) {
+  const launched = spawnHiddenDetached({
+    file: codexBinary(),
+    args,
+    cwd: root,
+    stdin: files.taskFile,
+    stdout: files.logFile,
+    stderr: files.errFile,
+    pidFile: path.join(files.dir, "pid"),
+    errFile: path.join(files.dir, "launch-error.txt")
+  });
+
+  if (launched.pid) {
+    return launched.pid;
+  }
+
+  // The launcher may have started codex and died before writing the pid down.
+  // The job id is in the command line, via --output-last-message, which is the
+  // same fact processMatchesJob relies on.
+  const [recovered] = findPidsByCommandLine(jobID);
+  if (recovered) {
+    return recovered;
+  }
+
+  throw new Error(`Could not start codex: ${launched.reason}`);
 }
 
 /**

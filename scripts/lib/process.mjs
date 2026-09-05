@@ -74,6 +74,47 @@ export function terminateProcessTree(pid, { force = false } = {}) {
 }
 
 /**
+ * Live pids whose command line contains `marker`. Windows only.
+ *
+ * The recovery path for a launcher that created the process and then died
+ * before it could write the pid down. Every job already carries a unique marker
+ * in its command line, so this finds the process rather than orphaning it.
+ */
+export function findPidsByCommandLine(marker) {
+  if (!IS_WINDOWS) {
+    return [];
+  }
+
+  // Escaped for a WQL LIKE, where the wildcards are % and _ and a literal is
+  // bracketed. The apostrophe doubling comes first, or it would escape itself.
+  const escaped = String(marker)
+    .replace(/'/g, "''")
+    .replace(/[%_[]/g, "[$&]");
+
+  try {
+    const output = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        // The querying process's own command line contains the marker, so it
+        // has to exclude itself or it always finds a match.
+        `(Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%${escaped}%'" | Where-Object { $_.ProcessId -ne $PID }).ProcessId`
+      ],
+      { encoding: "utf8", timeout: 15_000, windowsHide: true }
+    );
+
+    return output
+      .split(/\r?\n/)
+      .map((line) => Number.parseInt(line.trim(), 10))
+      .filter((value) => Number.isInteger(value) && value > 0);
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Command line of a running process, or null.
  *
  * This is the identity check that makes a recycled PID safe: before killing

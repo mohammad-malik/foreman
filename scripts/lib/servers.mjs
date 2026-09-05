@@ -33,7 +33,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { isAlive, processCommandLine, terminateProcessTree } from "./process.mjs";
+import { spawnHiddenDetached } from "./hidden-spawn.mjs";
+import {
+  findPidsByCommandLine,
+  isAlive,
+  processCommandLine,
+  terminateProcessTree
+} from "./process.mjs";
 import { credentialEnv } from "./credentials.mjs";
 import { opencodeBinary, OpencodeError } from "./opencode.mjs";
 import { hasActiveJobs } from "./jobs.mjs";
@@ -407,34 +413,72 @@ async function startServer(workspace) {
   const scratch = path.join(stateRoot(), "server-cwd");
   fs.mkdirSync(scratch, { recursive: true });
 
-  const child = spawn(
-    opencodeBinary(),
-    ["serve", "--port", String(port), "--hostname", "127.0.0.1"],
-    {
+  const serveArgs = ["serve", "--port", String(port), "--hostname", "127.0.0.1"];
+  let pid;
+
+  if (process.platform === "win32") {
+    // Launched hidden, so the server and every tool process it starts share one
+    // windowless console instead of each getting a visible one. See
+    // hidden-spawn.mjs. Start-Process refuses one file for both output streams,
+    // hence the separate .err file, and stdin is redirected from an empty file
+    // so the server inherits nothing of ours.
+    fs.closeSync(out);
+    const errLog = `${log}.err`;
+    fs.writeFileSync(errLog, "", "utf8");
+    const noInput = path.join(stateRoot(), "no-input");
+    if (!fs.existsSync(noInput)) {
+      fs.writeFileSync(noInput, "", "utf8");
+    }
+
+    const launched = spawnHiddenDetached({
+      file: opencodeBinary(),
+      args: serveArgs,
+      cwd: scratch,
+      env: childEnv,
+      stdin: noInput,
+      stdout: log,
+      stderr: errLog,
+      pidFile: path.join(workspaceStateDir(slug), "server.launch.pid"),
+      errFile: path.join(workspaceStateDir(slug), "server.launch.err")
+    });
+
+    // The port is ours and cannot belong to an older live server, so it is a
+    // safe marker for recovering a pid the launcher failed to report.
+    pid = launched.pid ?? findPidsByCommandLine(`--port ${port} --hostname`)[0] ?? null;
+
+    if (!pid) {
+      clearLock(slug);
+      throw new OpencodeError(`Could not start the OpenCode server: ${launched.reason}`, {
+        code: "server_start_failed"
+      });
+    }
+  } else {
+    const child = spawn(opencodeBinary(), serveArgs, {
       cwd: scratch,
       detached: true,
       windowsHide: true,
       stdio: ["ignore", out, out],
       env: childEnv
-    }
-  );
+    });
 
-  child.unref();
-  fs.closeSync(out);
+    child.unref();
+    fs.closeSync(out);
+    pid = child.pid;
+  }
 
   const url = `http://127.0.0.1:${port}`;
 
   try {
-    await waitForServer(url, password, { pid: child.pid, deadline: Date.now() + START_TIMEOUT_MS });
+    await waitForServer(url, password, { pid, deadline: Date.now() + START_TIMEOUT_MS });
   } catch (error) {
-    terminateProcessTree(child.pid, { force: true });
+    terminateProcessTree(pid, { force: true });
     clearLock(slug);
     throw error;
   }
 
   const record = {
     status: "running",
-    pid: child.pid,
+    pid,
     url,
     port,
     password,
