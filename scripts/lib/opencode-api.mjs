@@ -12,6 +12,7 @@
  */
 
 import { authHeader } from "./servers.mjs";
+import { oneLine } from "./render.mjs";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 
@@ -136,48 +137,12 @@ export class OpencodeApi {
   }
 
   /**
-   * Whether the session has finished its current turn.
-   *
-   * There is a `/wait` endpoint, and in 1.18.16 it answers 503 with "Session
-   * wait is not available yet", so polling is not a shortcut here: it is the
-   * only thing that works.
-   *
-   * The signal is the newest assistant message's `finish` reason. Nothing else
-   * is reliable. Completion timestamps are not: every message in a multi-step
-   * turn carries one as soon as that step ends. Presence of text is not
-   * either, and that mistake had teeth: a model that narrates before calling
-   * tools ("I'll start by reading the relevant files") produces a completed
-   * message with text on its very first step, so a real job was reported
-   * finished after eight seconds with a preamble as its answer while the agent
-   * carried on working.
-   *
-   * `finish` is "tool-calls" while the model intends to continue and "stop"
-   * when the turn is genuinely over. Anything else completed is also treated
-   * as over, because a turn that ended on a length limit or an error is not
-   * going to produce more on its own.
+   * Whether the session has finished its current turn. One transcript fetch;
+   * see `turnStateFrom` for the rules, and pass an already-fetched transcript
+   * to that directly when you have one, so a poll does not download it twice.
    */
   async turnState(sessionID) {
-    const list = messageList(await this.messages(sessionID));
-    const assistants = list.filter(
-      (entry) => entry?.type === "assistant" || entry?.role === "assistant"
-    );
-
-    if (assistants.length === 0) {
-      return { state: "working", assistants: 0 };
-    }
-
-    // messageList puts these in conversation order, so the newest is last.
-    const newest = assistants[assistants.length - 1];
-    const completed = Boolean(newest?.time?.completed);
-    const finish = newest?.finish ?? null;
-
-    const stillGoing = !completed || finish === null || finish === "tool-calls";
-
-    return {
-      state: stillGoing ? "working" : "idle",
-      assistants: assistants.length,
-      finish
-    };
+    return turnStateFrom(await this.messages(sessionID));
   }
 
   messages(sessionID) {
@@ -213,6 +178,80 @@ export class OpencodeApi {
 }
 
 /**
+ * Whether the session's current turn is over, and how it ended.
+ *
+ * There is a `/wait` endpoint, and in 1.18.16 it answers 503 with "Session
+ * wait is not available yet", so polling is not a shortcut here: it is the
+ * only thing that works.
+ *
+ * The signal is the newest assistant message's `finish` reason. Nothing else
+ * is reliable. Completion timestamps are not: every message in a multi-step
+ * turn carries one as soon as that step ends. Presence of text is not either,
+ * and that mistake had teeth: a model that narrates before calling tools ("I'll
+ * start by reading the relevant files") produces a completed message with text
+ * on its very first step, so a real job was reported finished after eight
+ * seconds with a preamble as its answer while the agent carried on working.
+ *
+ * `finish` is "tool-calls" while the model intends to continue and "stop" when
+ * the turn is genuinely over. Anything else completed is also over, but it is
+ * NOT a success: a turn that ended on "error", "length" or an abort did not do
+ * the work, and a provider 429 from Moonshot or Fireworks is exactly how that
+ * arrives. It used to read as completed with whatever text had been produced
+ * so far. Now `error` carries the reason and the caller fails the job with it.
+ */
+export function turnStateFrom(messages) {
+  const list = messageList(messages);
+  const assistants = list.filter(isAssistant);
+
+  if (assistants.length === 0) {
+    return { state: "working", assistants: 0, finish: null, error: null };
+  }
+
+  // messageList puts these in conversation order, so the newest is last.
+  const newest = assistants[assistants.length - 1];
+  const completed = Boolean(newest?.time?.completed);
+  const finish = newest?.finish ?? null;
+  const reportedError = describeMessageError(newest?.error);
+
+  // A message the server has marked as errored is over whatever its finish
+  // reason says; the runner does not always get to write one.
+  if (reportedError) {
+    return { state: "idle", assistants: assistants.length, finish, error: reportedError };
+  }
+
+  const stillGoing = !completed || finish === null || finish === "tool-calls";
+  if (stillGoing) {
+    return { state: "working", assistants: assistants.length, finish, error: null };
+  }
+
+  return {
+    state: "idle",
+    assistants: assistants.length,
+    finish,
+    error: finish === "stop" ? null : `The model's turn ended with finish reason "${finish}" rather than completing.`
+  };
+}
+
+/**
+ * OpenCode records a failed step as `error: { name, data: { message } }` on
+ * the assistant message. Shapes vary by provider, so anything string-like in
+ * there is accepted and flattened to one line.
+ */
+function describeMessageError(error) {
+  if (!error) {
+    return null;
+  }
+  if (typeof error === "string") {
+    return oneLine(error, 500);
+  }
+  const message = error?.data?.message ?? error?.message ?? error?.name ?? null;
+  if (message) {
+    return oneLine(`${error.name && error.name !== message ? `${error.name}: ` : ""}${message}`, 500);
+  }
+  return oneLine(JSON.stringify(error), 500);
+}
+
+/**
  * Normalise the message list.
  *
  * OpenCode returns messages newest first. Reversing here means every reader
@@ -234,18 +273,36 @@ function isAssistant(message) {
   return message?.type === "assistant" || message?.role === "assistant";
 }
 
+function isUser(message) {
+  return message?.type === "user" || message?.role === "user";
+}
+
 /**
  * The external agent's final answer.
  *
  * Only `text` parts count. Reasoning and tool parts are deliberately excluded:
  * a model's private thinking is not its answer, and returning it would be both
- * noisy and misleading. Returns null when there is no answer, which is
- * reported as such rather than papered over with nearby text.
+ * noisy and misleading.
+ *
+ * Only the current turn is consulted: the assistant messages after the most
+ * recent user message. Walking further back returned text from an earlier turn
+ * as though it answered this one. Within the turn the newest text wins, so a
+ * final step that says nothing (a model that ended on a tool call) yields the
+ * last thing it did say rather than nothing at all. Returns null when the turn
+ * produced no text, which is reported as such rather than papered over.
  */
 export function finalAssistantText(messages) {
   const list = messageList(messages);
 
+  let start = 0;
   for (let i = list.length - 1; i >= 0; i -= 1) {
+    if (isUser(list[i])) {
+      start = i + 1;
+      break;
+    }
+  }
+
+  for (let i = list.length - 1; i >= start; i -= 1) {
     if (!isAssistant(list[i])) {
       continue;
     }
@@ -264,7 +321,14 @@ export function finalAssistantText(messages) {
   return null;
 }
 
-/** Every tool invocation in the session, in order, with its outcome. */
+/**
+ * Every tool invocation in the session, in order, with its outcome.
+ *
+ * The input is summarised, not stored. An edit's input is the whole new file
+ * body, and keeping every one of them in the job record made records grow by
+ * megabytes and `status` slow to a crawl parsing them. Two hundred characters
+ * is enough to see which file a call touched.
+ */
 export function toolCalls(messages) {
   const calls = [];
 
@@ -276,12 +340,20 @@ export function toolCalls(messages) {
       calls.push({
         tool: part.name ?? part.tool ?? "unknown",
         status: part.state?.status ?? "unknown",
-        input: part.state?.input ?? null
+        detail: summariseInput(part.state?.input)
       });
     }
   }
 
   return calls;
+}
+
+function summariseInput(input) {
+  if (input === undefined || input === null) {
+    return null;
+  }
+  const text = typeof input === "string" ? input : JSON.stringify(input);
+  return oneLine(text, 200);
 }
 
 /**

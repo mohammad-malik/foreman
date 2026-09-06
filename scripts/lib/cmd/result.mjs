@@ -11,12 +11,15 @@
  * Everything the model wrote is untrusted. Its final response and any file
  * content it quotes can carry text that reads like instructions, either from
  * the model itself or injected into something it read. It is fenced and
- * labelled so it cannot be mistaken for part of this tool's own output.
+ * labelled so it cannot be mistaken for part of this tool's own output. That
+ * goes for the small things too: a permission request's command string, a
+ * child session's title, an error a provider relayed. None of it is printed
+ * bare.
  */
 
 import { diffAgainstBaseline, diffStat } from "../git-baseline.mjs";
 import { isStalled, judgeCodexJob, readCodexJob } from "../codex-job.mjs";
-import { finalAssistantText, OpencodeApi, toolCalls, usageTotals } from "../opencode-api.mjs";
+import { finalAssistantText, OpencodeApi, toolCalls, turnStateFrom, usageTotals } from "../opencode-api.mjs";
 import { currentServer, touch } from "../servers.mjs";
 import {
   describeElapsed,
@@ -27,10 +30,34 @@ import {
   updateJob
 } from "../jobs.mjs";
 import { listWorkspaces } from "../registry.mjs";
-import { bullet, heading, keyValue, untrustedBlock } from "../render.mjs";
+import { bullet, heading, keyValue, oneLine, untrustedBlock, untrustedInline } from "../render.mjs";
 
 function workspaceFor(slug) {
   return listWorkspaces().find((entry) => entry.slug === slug) ?? null;
+}
+
+/**
+ * Whether the change set may be computed now.
+ *
+ * Once a job is finished its change set is frozen. Recomputing later would
+ * report the state of the tree now, not what the job did: revert a job and it
+ * would retroactively claim to have changed nothing, which is exactly backwards.
+ *
+ * And while a cancel is letting the interrupted tool call finish its write,
+ * nobody else may compute one either, or the first collector to run freezes a
+ * diff missing that write and the complete one is refused.
+ */
+function mayComputeChanges(job) {
+  if (!job.baseline) {
+    return false;
+  }
+  if (job.finishedAt && job.changes) {
+    return false;
+  }
+  if (job.settlingUntil && Date.now() < Date.parse(job.settlingUntil)) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -52,11 +79,22 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
   }
 
   const workspace = workspaceFor(slug);
-  const server = workspace ? currentServer(workspace) : null;
+  let server = workspace ? currentServer(workspace) : null;
+
+  // The server that is running is not necessarily the one this job's session
+  // lived on. Asking a replacement server about a dead session gets a 404 and
+  // a warning, which read as "still running" forever. Reconciliation fails the
+  // job; here it is simply treated as having no server.
+  let replaced = false;
+  if (server && job.serverUrl && server.url !== job.serverUrl) {
+    replaced = true;
+    server = null;
+  }
 
   // Whether the agent's current turn is actually over, as opposed to a
-  // message that merely has some text in it so far.
-  let turnFinished = false;
+  // message that merely has some text in it so far, and if so whether it
+  // ended well.
+  let turn = { state: "working", error: null };
 
   const collected = {
     finalText: job.result?.finalText ?? null,
@@ -78,8 +116,10 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
     const api = new OpencodeApi(server, { timeout });
 
     try {
+      // One transcript fetch serves the answer, the tool list, the usage
+      // totals and the turn state. It used to be fetched twice per poll.
       const messages = await api.messages(job.sessionID);
-      turnFinished = (await api.turnState(job.sessionID)).state === "idle";
+      turn = turnStateFrom(messages);
       collected.finalText = finalAssistantText(messages) ?? collected.finalText;
       collected.tools = toolCalls(messages);
 
@@ -101,8 +141,8 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
         .filter((entry) => entry?.parentID === job.sessionID)
         .map((entry) => ({
           id: entry.id,
-          agent: entry.agent ?? "unknown",
-          title: entry.title ?? "",
+          agent: oneLine(entry.agent ?? "unknown", 60),
+          title: oneLine(entry.title ?? "", 200),
           cost: entry.cost ?? null
         }));
     } catch (error) {
@@ -117,22 +157,18 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
     }
   } else {
     collected.warnings.push(
-      "The OpenCode server for this workspace is no longer running, so this is the last state that was recorded."
+      replaced
+        ? "The OpenCode server this job ran on was replaced, so this is the last state that was recorded."
+        : "The OpenCode server for this workspace is no longer running, so this is the last state that was recorded."
     );
     // Nothing can advance without a server, so whatever was captured before it
     // stopped is final. Reconciliation decides whether that counts as failure.
-    turnFinished = Boolean(collected.finalText);
+    turn = { state: collected.finalText ? "idle" : "working", error: null };
   }
 
   let changes = job.changes ?? null;
 
-  // Once a job is finished its change set is frozen. Recomputing later would
-  // report the state of the tree now, not what the job did: revert a job and
-  // it would retroactively claim to have changed nothing, which is exactly
-  // backwards.
-  const settled = job.finishedAt && changes;
-
-  if (job.baseline && !settled) {
+  if (mayComputeChanges(job)) {
     try {
       const diff = diffAgainstBaseline(job.baseline);
       changes = {
@@ -145,6 +181,8 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
   }
 
   let status = job.status;
+  let error = job.error ?? null;
+
   if (collected.pendingPermissions.length > 0) {
     // Stamp the wait so the budget stops running. Idempotent, so repeated
     // polling does not keep resetting it.
@@ -156,20 +194,29 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
     if (server) {
       job = markPolled(job);
     }
-    // Text alone is not enough. An assistant message still streaming already
-    // has partial text, and settling on it would freeze an incomplete change
-    // set and drop the job out of active-server protection while the agent is
-    // still editing. The turn must actually be finished.
-    status = turnFinished && collected.finalText ? "completed" : "running";
+    // The turn must actually be finished. An assistant message still streaming
+    // already has partial text, and settling on it would freeze an incomplete
+    // change set and drop the job out of active-server protection while the
+    // agent is still editing. And a finished turn is only a success when it
+    // finished cleanly: a provider error or a length cut-off is a failure with
+    // the reason attached, not a completion with whatever text came before.
+    if (turn.state !== "idle") {
+      status = "running";
+    } else if (turn.error) {
+      status = "failed";
+      error = turn.error;
+    } else {
+      status = "completed";
+    }
   }
 
   // Cancelled belongs here too. Without it a cancelled job never gets a
   // finishedAt, so its elapsed time grows forever and its change set is
   // recomputed against edits that have nothing to do with it.
-  const isTerminal = status === "completed" || status === "failed" || status === "cancelled";
+  const isTerminal = TERMINAL_STATUSES.has(status);
   const finishedAt = isTerminal ? (job.finishedAt ?? new Date().toISOString()) : null;
 
-  return updateJob(job, { status, finishedAt, result: collected, changes });
+  return updateJob(job, { status, finishedAt, error, result: collected, changes });
 }
 
 /**
@@ -195,7 +242,7 @@ function collectCodexResult(job) {
   };
 
   if (state.stderr) {
-    collected.warnings.push(`codex wrote to stderr: ${state.stderr.slice(0, 500)}`);
+    collected.warnings.push(`codex wrote to stderr: ${untrustedInline(state.stderr, { max: 500, label: "codex stderr" })}`);
   }
 
   if (state.alive && state.silent) {
@@ -212,9 +259,8 @@ function collectCodexResult(job) {
   const isTerminal = TERMINAL_STATUSES.has(status);
 
   let changes = job.changes ?? null;
-  const settled = job.finishedAt && changes;
 
-  if (job.baseline && !settled) {
+  if (mayComputeChanges(job)) {
     try {
       const diff = diffAgainstBaseline(job.baseline);
       changes = {
@@ -262,7 +308,9 @@ export function renderResult(job) {
 
   if (job.error) {
     lines.push(heading("Failure"));
-    lines.push(job.error);
+    // Provider and model errors are relayed text, so they are quoted rather
+    // than printed as though this tool had said them.
+    lines.push(`  ${untrustedInline(job.error, { max: 600, label: "reported error" })}`);
   }
 
   // Changes first: this is the part that is verified rather than claimed.
@@ -299,7 +347,7 @@ export function renderResult(job) {
   if (children.length > 0) {
     lines.push(heading("Child agents (from the server, not from the agent)"));
     for (const child of children) {
-      lines.push(bullet(`${child.agent}  ${child.id}  ${child.title}`));
+      lines.push(bullet(`${child.agent}  ${child.id}  ${untrustedInline(child.title, { max: 200, label: "title" })}`));
     }
   }
 
@@ -307,9 +355,12 @@ export function renderResult(job) {
   if (pending.length > 0) {
     lines.push(heading("Waiting for permission"));
     for (const request of pending) {
-      lines.push(bullet(`${request.id}  ${request.action}`));
+      lines.push(bullet(`${request.id}  ${oneLine(request.action ?? request.type ?? "unknown", 60)}`));
+      // The resource is the agent's own command string or path. It is what the
+      // user is being asked to approve, so it must be shown, but it is model
+      // output and is quoted as such.
       for (const resource of request.resources ?? []) {
-        lines.push(bullet(resource, 6));
+        lines.push(bullet(untrustedInline(resource, { max: 400, label: "requested" }), 6));
       }
     }
     lines.push("");

@@ -37,13 +37,14 @@ import { spawnHiddenDetached } from "./hidden-spawn.mjs";
 import {
   findPidsByCommandLine,
   isAlive,
+  primeCommandLines,
   processCommandLine,
   terminateProcessTree
 } from "./process.mjs";
 import { credentialEnv } from "./credentials.mjs";
 import { opencodeBinary, OpencodeError } from "./opencode.mjs";
 import { hasActiveJobs } from "./jobs.mjs";
-import { readJsonIfPresent, stateRoot, workspaceStateDir } from "./state.mjs";
+import { readJsonIfPresent, renameWithRetry, stateRoot, workspaceStateDir } from "./state.mjs";
 
 /** Compared by callers, so it is named rather than repeated as a string. */
 export const ACTIVE_JOBS_REASON = "it still has active jobs";
@@ -82,7 +83,7 @@ function writeLock(slug, value) {
   const file = lockFile(slug);
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  fs.renameSync(tmp, file);
+  renameWithRetry(tmp, file);
 }
 
 function clearLock(slug) {
@@ -209,35 +210,119 @@ function claimStart(slug, workspaceRoot, attempt = 0) {
  * server. But it *replaces* the user's config rather than merging with it, so
  * anything they had set would silently stop applying to our servers.
  *
- * The fix is to do the merge here: read their global config, layer our agents
- * and depth limit on top, and write the result to a directory we own. Their
- * files are never modified, and their settings keep working. Credentials are
- * unaffected either way, since auth lives outside the config directory.
+ * The fix is to do the merge here: read their global config, carry over the
+ * parts that describe how to REACH models, layer our agents and depth limit on
+ * top, and write the result to a directory we own. Their files are never
+ * modified. Credentials are unaffected either way, since auth lives outside
+ * the config directory.
+ *
+ * Only an allowlist of their keys comes across. The whole file used to, and
+ * that loaded their MCP servers and plugins into a server driven by an
+ * external model: tools that `external_directory: deny` does not gate, reaching
+ * wherever the user had pointed them. `share` could have published transcripts.
+ * Provider definitions, model defaults, formatters and LSP settings are what a
+ * spawned server legitimately needs from the user, and nothing else is copied.
+ *
+ * One directory per workspace, written atomically. A single shared file was
+ * rewritten in place by every server start, so two starting at once could hand
+ * OpenCode a torn file, and this file is what denies bash to the researcher.
  */
-export function pluginConfigDir() {
+const USER_CONFIG_KEYS_CARRIED = new Set([
+  "provider",
+  "disabled_providers",
+  "enabled_providers",
+  "model",
+  "small_model",
+  "formatter",
+  "lsp",
+  "compaction",
+  "snapshot"
+]);
+
+export function pluginConfigDir(slug = "shared") {
   const file = path.resolve(HERE, "..", "..", "config", "opencode-agents.json");
   const ours = JSON.parse(fs.readFileSync(file, "utf8"));
-  const theirs = readUserOpencodeConfig();
+  const theirs = readUserOpencodeConfig().config;
 
-  const merged = {
-    ...theirs,
-    ...ours,
-    // Their agents survive; ours win on a name collision, because a workspace
-    // pointed at "external-builder" must get the permissions we defined.
-    agent: { ...(theirs.agent ?? {}), ...(ours.agent ?? {}) }
-  };
+  const carried = {};
+  for (const key of Object.keys(theirs)) {
+    if (USER_CONFIG_KEYS_CARRIED.has(key)) {
+      carried[key] = theirs[key];
+    }
+  }
 
-  const dir = path.join(stateRoot(), "opencode-config");
+  const merged = { ...carried, ...ours };
+
+  const dir = path.join(stateRoot(), "opencode-config", slug);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "opencode.json"), `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  const target = path.join(dir, "opencode.json");
+  const tmp = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(tmp, `${JSON.stringify(merged, null, 2)}\n`, "utf8");
+  renameWithRetry(tmp, target);
   return dir;
 }
 
 /**
- * The user's own global OpenCode config, if any. Comments are stripped because
- * the file is conventionally .jsonc and JSON.parse will not tolerate them.
+ * Strip // and block comments from JSONC without touching string contents.
+ *
+ * The regex version ate `/*` inside strings, so a permission glob like
+ * "src/*" or "**\/*.pem" (which every OpenCode config has) corrupted the text,
+ * JSON.parse failed, and the user's config was silently dropped.
  */
-function readUserOpencodeConfig() {
+export function stripJsonComments(text) {
+  let out = "";
+  let i = 0;
+  const n = text.length;
+
+  while (i < n) {
+    const ch = text[i];
+
+    if (ch === '"') {
+      // Copy the whole string literal, honouring escapes.
+      let j = i + 1;
+      while (j < n && text[j] !== '"') {
+        j += text[j] === "\\" ? 2 : 1;
+      }
+      out += text.slice(i, Math.min(j + 1, n));
+      i = j + 1;
+      continue;
+    }
+
+    if (ch === "/" && text[i + 1] === "/") {
+      while (i < n && text[i] !== "\n") {
+        i += 1;
+      }
+      continue;
+    }
+
+    if (ch === "/" && text[i + 1] === "*") {
+      const end = text.indexOf("*/", i + 2);
+      i = end === -1 ? n : end + 2;
+      continue;
+    }
+
+    // Trailing commas are tolerated by OpenCode's loader, so they are here
+    // too. Handled inside the scanner, where a string literal has already been
+    // copied whole: a regex over the finished text also rewrote ",]" inside a
+    // value, which turned a valid API key into a different string.
+    if (ch === "}" || ch === "]") {
+      out = out.replace(/,\s*$/, "");
+    }
+
+    out += ch;
+    i += 1;
+  }
+
+  return out;
+}
+
+/**
+ * The user's own global OpenCode config, if any.
+ *
+ * Returns `{ file, config, error }` so doctor can say when the file exists but
+ * could not be read, rather than the servers quietly running without it.
+ */
+export function readUserOpencodeConfig() {
   const candidates = [
     path.join(os.homedir(), ".config", "opencode", "opencode.jsonc"),
     path.join(os.homedir(), ".config", "opencode", "opencode.json")
@@ -248,22 +333,16 @@ function readUserOpencodeConfig() {
       continue;
     }
     try {
-      const raw = fs
-        .readFileSync(candidate, "utf8")
-        .replace(/^\s*\/\/.*$/gm, "")
-        .replace(/\/\*[\s\S]*?\*\//g, "");
-      const parsed = JSON.parse(raw);
-      // Their $schema would point our generated file at the wrong thing.
-      delete parsed.$schema;
-      return parsed;
-    } catch {
+      const parsed = JSON.parse(stripJsonComments(fs.readFileSync(candidate, "utf8")));
+      return { file: candidate, config: parsed && typeof parsed === "object" ? parsed : {}, error: null };
+    } catch (error) {
       // A config we cannot parse is not a reason to refuse to start. Ours
-      // still applies; theirs is skipped, and doctor is where that shows up.
-      return {};
+      // still applies; theirs is skipped, and doctor reports it.
+      return { file: candidate, config: {}, error: error.message };
     }
   }
 
-  return {};
+  return { file: null, config: {}, error: null };
 }
 
 /** Ask the OS for a free port by binding to 0 and immediately releasing it. */
@@ -301,6 +380,26 @@ export async function health(server, { timeout = HEALTH_TIMEOUT_MS } = {}) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Two probes before a server is written off, with a longer second timeout.
+ *
+ * Killing a server ends every session on it. One five-second probe used to be
+ * enough to do that, and a server busy indexing a large repository answers in
+ * six. The active-jobs guard in stopServer catches most of the damage, but not
+ * the window in another session between creating a session and recording its
+ * job, so the kill decision itself has to be slower to reach.
+ */
+async function healthWithRetry(server) {
+  if (await health(server)) {
+    return true;
+  }
+  if (!isAlive(server.pid)) {
+    return false;
+  }
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+  return health(server, { timeout: HEALTH_TIMEOUT_MS * 2 });
 }
 
 /**
@@ -398,7 +497,7 @@ async function startServer(workspace) {
     ...credentialEnv(),
     OPENCODE_SERVER_PASSWORD: password,
     // Points at a directory we generate and own. See pluginConfigDir.
-    OPENCODE_CONFIG_DIR: pluginConfigDir()
+    OPENCODE_CONFIG_DIR: pluginConfigDir(slug)
   };
   // Do not let another plugin's exported value follow us in. Deleting the key
   // is not the same as setting it to undefined, which Node would pass through
@@ -522,7 +621,7 @@ export async function acquireServer(workspace, { attempt = 0 } = {}) {
   const existing = readLock(slug);
 
   if (existing?.status === "running") {
-    if (looksLikeOurServer(existing) && (await health(existing))) {
+    if (looksLikeOurServer(existing) && (await healthWithRetry(existing))) {
       touch(slug);
       return existing;
     }
@@ -667,8 +766,17 @@ export async function sweep(
 ) {
   const actions = [];
 
-  for (const workspace of workspaces) {
-    const record = readLock(workspace.slug);
+  // One subprocess for every server's command line rather than one each. The
+  // sweep runs on every turn of every session, and each identity check on
+  // Windows is a PowerShell start.
+  const records = workspaces.map((workspace) => [workspace, readLock(workspace.slug)]);
+  primeCommandLines(
+    records
+      .filter(([, record]) => record?.status === "running" && record.pid)
+      .map(([, record]) => record.pid)
+  );
+
+  for (const [workspace, record] of records) {
     if (!record) {
       continue;
     }

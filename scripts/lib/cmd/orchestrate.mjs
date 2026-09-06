@@ -11,10 +11,11 @@ import { detectVersion, loadInventory } from "../opencode.mjs";
 import { codexModels } from "../codex.mjs";
 import { describeAvailable, resolveSpoken, SpokenNameError } from "../resolve-spoken.mjs";
 import { ACTIVE_STATUSES, describeElapsed, listJobs, loadJob } from "../jobs.mjs";
-import { listWorkspaces } from "../registry.mjs";
+import { findWorkspaceFor, listWorkspaces } from "../registry.mjs";
 import { reconcileAll } from "../reconcile.mjs";
 import { collectResult } from "./result.mjs";
-import { bullet, heading } from "../render.mjs";
+import { currentSessionID } from "./notify.mjs";
+import { bullet, heading, oneLine } from "../render.mjs";
 
 /**
  * Every backend's live model list, gathered best effort.
@@ -99,41 +100,78 @@ const WAIT_POLL_MS = 15_000;
 const WAIT_REQUEST_TIMEOUT_MS = 8_000;
 
 /**
+ * Which active jobs a bare `wait` means.
+ *
+ * "Everything" used to mean every active job on the machine, so a session
+ * waiting on its own two jobs also blocked on, and then reported, a stranger's
+ * job in another repository. Now it means the jobs this session dispatched,
+ * plus any active job in the repository the caller is standing in. `--all`
+ * restores the machine-wide meaning for someone who really wants it.
+ */
+export function selectDefaultJobs(workspaces, jobs, { sessionID, cwd, all = false }) {
+  if (all) {
+    return jobs.filter(({ job }) => ACTIVE_STATUSES.has(job.status));
+  }
+
+  let here = null;
+  try {
+    here = cwd ? findWorkspaceFor(cwd) : null;
+  } catch {
+    here = null;
+  }
+
+  return jobs.filter(({ workspace, job }) => {
+    if (!ACTIVE_STATUSES.has(job.status)) {
+      return false;
+    }
+    if (sessionID && job.dispatchSessionID === sessionID) {
+      return true;
+    }
+    return Boolean(here) && here.slug === workspace.slug;
+  });
+}
+
+/**
  * Block until the named jobs reach a terminal state.
  *
- * With no ids, every active job across every workspace is waited on, which is
- * what "when everything is done" means. Returns as soon as they are all
- * settled, or when the deadline expires, and reports which is which: a caller
- * that goes on to run a review needs to know whether it is reviewing finished
- * work or a timeout.
+ * With no ids, the jobs this session dispatched and any active job in the
+ * current repository are waited on. Returns as soon as they are all settled,
+ * or when the deadline expires, and reports which is which: a caller that goes
+ * on to run a review needs to know whether it is reviewing finished work or a
+ * timeout.
  *
  * A job blocked on a permission is NOT waited out silently. Waiting for a human
  * who has not been told to look is how a job sat unanswered for 25 minutes, so
  * this returns immediately and says who it is waiting for.
  */
-export async function waitForJobs(jobIDs = [], { timeoutSeconds = 3600 } = {}) {
+export async function waitForJobs(jobIDs = [], { timeoutSeconds = 3600, all = false, cwd = process.cwd() } = {}) {
   const deadline = Date.now() + timeoutSeconds * 1000;
   const workspaces = listWorkspaces();
+  const sessionID = currentSessionID();
 
   if (workspaces.length === 0) {
     return "No workspaces registered, so there is nothing to wait for.";
   }
 
   for (;;) {
-    reconcileAll(workspaces);
+    await reconcileAll(workspaces);
 
-    const tracked = [];
-    for (const workspace of workspaces) {
-      for (const job of listJobs(workspace.slug)) {
-        if (jobIDs.length > 0 ? jobIDs.includes(job.id) : ACTIVE_STATUSES.has(job.status)) {
-          tracked.push({ workspace, job });
-        }
-      }
-    }
+    const everything = workspaces.flatMap((workspace) =>
+      listJobs(workspace.slug).map((job) => ({ workspace, job }))
+    );
+
+    const tracked =
+      jobIDs.length > 0
+        ? everything.filter(({ job }) => jobIDs.includes(job.id))
+        : selectDefaultJobs(workspaces, everything, { sessionID, cwd, all });
 
     if (tracked.length === 0) {
-      return jobIDs.length > 0
-        ? `None of those job ids exist: ${jobIDs.join(", ")}`
+      if (jobIDs.length > 0) {
+        return `None of those job ids exist: ${jobIDs.join(", ")}`;
+      }
+      const elsewhere = everything.filter(({ job }) => ACTIVE_STATUSES.has(job.status)).length;
+      return elsewhere > 0 && !all
+        ? `Nothing of yours is running here. ${elsewhere} job(s) are active in other sessions or repositories; pass their ids, or --all to wait on everything.`
         : "Nothing is running.";
     }
 
@@ -192,7 +230,7 @@ function renderSettled(jobs) {
     const detail =
       job.status === "completed"
         ? `${changed} file(s) changed`
-        : (job.error ?? job.status);
+        : (job.error ? oneLine(job.error, 200) : job.status);
 
     lines.push(
       bullet(`${job.id}  ${job.status.padEnd(10)} ${job.qualified ?? job.alias}  ${detail}`)

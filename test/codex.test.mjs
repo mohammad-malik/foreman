@@ -321,11 +321,11 @@ for (const reconcile of [false, true]) {
     assert.equal(result.status, "running");
     assert.equal(result.finishedAt, null);
     assert.deepEqual(result.changes.changed.map(entry => entry.path), ["early.txt"]);
-    assert.deepEqual(reconcileWorkspace(workspace), []);
+    assert.deepEqual(await reconcileWorkspace(workspace), []);
     child.send("finish");
     await exited;
     if (reconcile) {
-      reconcileWorkspace(workspace);
+      await reconcileWorkspace(workspace);
       assert.equal(loadJob(job.slug, job.id).status, "completed");
     }
     result = await collectResult(job.slug, job.id);

@@ -20,6 +20,7 @@ import {
   SUPPORTED_RANGE
 } from "../opencode.mjs";
 import { codexModels, codexSignedIn, detectCodexVersion } from "../codex.mjs";
+import { readUserOpencodeConfig } from "../servers.mjs";
 import { findReservedCandidates, listAliases, resolveRoute } from "../routes.mjs";
 import { listWorkspaces } from "../registry.mjs";
 import { resolveStateRoot } from "../state.mjs";
@@ -97,6 +98,17 @@ export function doctor() {
     } catch (error) {
       record("fail", "Inventory", describe(error));
     }
+  }
+
+  const userConfig = readUserOpencodeConfig();
+  if (userConfig.error) {
+    record(
+      "warn",
+      "User config",
+      `${userConfig.file} could not be parsed (${userConfig.error}). Servers this plugin starts run without it: provider settings there will not apply.`
+    );
+  } else if (userConfig.file) {
+    record("ok", "User config", `${userConfig.file} (provider, model, formatter and lsp settings are carried over; mcp, plugin and share are not)`);
   }
 
   lines.push(heading("Codex backend"));

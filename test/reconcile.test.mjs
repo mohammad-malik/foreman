@@ -19,7 +19,7 @@ function makeJob(fields) {
   return updateJob(job, fields);
 }
 
-function withRunningServer(fn) {
+async function withRunningServer(fn) {
   // reconcile treats "no server" as proof a job is dead, so a fake running
   // record isolates the budget rules from the server-gone rule.
   const lock = path.join(workspaceStateDir(WORKSPACE.slug), "server.lock");
@@ -34,20 +34,20 @@ function withRunningServer(fn) {
     })
   );
   try {
-    return fn();
+    return await fn();
   } finally {
     fs.rmSync(lock, { force: true });
   }
 }
 
-test("a job past its budget is failed with a reason", () => {
-  withRunningServer(() => {
+test("a job past its budget is failed with a reason", async () => {
+  await withRunningServer(async () => {
     const job = makeJob({
       startedAt: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
       budgetMs: 60_000
     });
 
-    reconcileWorkspace(WORKSPACE);
+    await reconcileWorkspace(WORKSPACE);
     const after = loadJob(WORKSPACE.slug, job.id);
 
     assert.equal(after.status, "failed");
@@ -56,17 +56,17 @@ test("a job past its budget is failed with a reason", () => {
   });
 });
 
-test("a job inside its budget is left running", () => {
-  withRunningServer(() => {
+test("a job inside its budget is left running", async () => {
+  await withRunningServer(async () => {
     const job = makeJob({ startedAt: new Date().toISOString(), budgetMs: 15 * 60 * 1000 });
 
-    reconcileWorkspace(WORKSPACE);
+    await reconcileWorkspace(WORKSPACE);
 
     assert.equal(loadJob(WORKSPACE.slug, job.id).status, "running");
   });
 });
 
-test("a job whose server is gone is failed, not left running forever", () => {
+test("a job whose server is gone is failed, not left running forever", async () => {
   // The deadlock this exists to prevent: a stranded job counts as live work,
   // so the idle sweep spares its server indefinitely and the job sits at
   // "running" for days.
@@ -75,47 +75,47 @@ test("a job whose server is gone is failed, not left running forever", () => {
     budgetMs: 60 * 60 * 1000
   });
 
-  reconcileWorkspace(WORKSPACE);
+  await reconcileWorkspace(WORKSPACE);
   const after = loadJob(WORKSPACE.slug, job.id);
 
   assert.equal(after.status, "failed");
   assert.match(after.error, /server running this job stopped/);
 });
 
-test("a just-dispatched job is given a grace period", () => {
+test("a just-dispatched job is given a grace period", async () => {
   // A server mid-restart, or the moment between dispatch and the first health
   // check, must not fail the job.
   const job = makeJob({ startedAt: new Date().toISOString(), budgetMs: 60 * 60 * 1000 });
 
-  reconcileWorkspace(WORKSPACE);
+  await reconcileWorkspace(WORKSPACE);
 
   assert.equal(loadJob(WORKSPACE.slug, job.id).status, "running");
 });
 
-test("jobs already in a terminal state are untouched", () => {
+test("jobs already in a terminal state are untouched", async () => {
   const done = makeJob({
     status: "completed",
     startedAt: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
     finishedAt: new Date().toISOString()
   });
 
-  reconcileWorkspace(WORKSPACE);
+  await reconcileWorkspace(WORKSPACE);
   const after = loadJob(WORKSPACE.slug, done.id);
 
   assert.equal(after.status, "completed");
   assert.equal(after.error, null);
 });
 
-test("reconciling twice does not rewrite an already failed job", () => {
+test("reconciling twice does not rewrite an already failed job", async () => {
   const job = makeJob({
     startedAt: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
     budgetMs: 60_000
   });
 
-  reconcileWorkspace(WORKSPACE);
+  await reconcileWorkspace(WORKSPACE);
   const first = loadJob(WORKSPACE.slug, job.id);
 
-  reconcileWorkspace(WORKSPACE);
+  await reconcileWorkspace(WORKSPACE);
   const second = loadJob(WORKSPACE.slug, job.id);
 
   assert.equal(second.finishedAt, first.finishedAt);

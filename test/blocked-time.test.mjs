@@ -44,7 +44,7 @@ function job(fields) {
  * was blocked, and one to a poll that credited 26 seconds of a 25-minute wait.
  */
 
-test("time blocked on a person does not count against the budget", () => {
+test("time blocked on a person does not count against the budget", async () => {
   // The job that was reaped at minute 65 as a "runaway" while sitting on an
   // unanswered prompt since minute 13.
   const started = minutesAgo(65);
@@ -57,7 +57,7 @@ test("time blocked on a person does not count against the budget", () => {
   );
 });
 
-test("waiting is credited from the last clean poll, not from discovery", () => {
+test("waiting is credited from the last clean poll, not from discovery", async () => {
   // The 26-seconds-of-25-minutes bug. A poll at minute 15 found it working; a
   // poll at minute 40 found it blocked. The request arose somewhere between,
   // so minute 15 is the bound the evidence supports.
@@ -71,21 +71,21 @@ test("waiting is credited from the last clean poll, not from discovery", () => {
   );
 });
 
-test("with no clean poll on record, waiting is credited from discovery", () => {
+test("with no clean poll on record, waiting is credited from discovery", async () => {
   // No evidence of when it began, so the conservative reading is used rather
   // than inventing a bound.
   const awaiting = markAwaiting(job({ startedAt: minutesAgo(10) }));
   assert.ok(blockedMs(awaiting) < 60_000);
 });
 
-test("markAwaiting is idempotent, so repeated polling does not reset the wait", () => {
+test("markAwaiting is idempotent, so repeated polling does not reset the wait", async () => {
   const first = markAwaiting(job({ startedAt: minutesAgo(30), lastPolledAt: minutesAgo(20) }));
   const second = markAwaiting(first);
 
   assert.equal(second.awaitingSince, first.awaitingSince);
 });
 
-test("resuming folds the wait into blockedMs and records a fresh poll", () => {
+test("resuming folds the wait into blockedMs and records a fresh poll", async () => {
   const awaiting = markAwaiting(job({ startedAt: minutesAgo(30), lastPolledAt: minutesAgo(20) }));
   const resumed = markResumed(awaiting);
 
@@ -95,7 +95,7 @@ test("resuming folds the wait into blockedMs and records a fresh poll", () => {
   assert.ok(resumed.lastPolledAt, "work resumes now, so this is a clean-poll bound too");
 });
 
-test("a blocked job past its raw age is NOT failed for budget", () => {
+test("a blocked job past its raw age is NOT failed for budget", async () => {
   // The precise failure: reconciliation applies the budget, so a blocked job
   // whose wall-clock age exceeds it was killed and became unanswerable.
   const blocked = job({
@@ -106,7 +106,7 @@ test("a blocked job past its raw age is NOT failed for budget", () => {
   });
 
   withServer();
-  reconcileWorkspace(WORKSPACE);
+  await reconcileWorkspace(WORKSPACE);
 
   const after = JSON.parse(
     fs.readFileSync(path.join(workspaceStateDir(WORKSPACE.slug), "jobs", `${blocked.id}.json`), "utf8")
@@ -114,12 +114,12 @@ test("a blocked job past its raw age is NOT failed for budget", () => {
   assert.equal(after.status, "awaiting_permission", "a job waiting on a person is not a runaway");
 });
 
-test("a job that really did exceed its budget while working is still failed", () => {
+test("a job that really did exceed its budget while working is still failed", async () => {
   // The budget must keep working; only blocked time is excluded.
   const runaway = job({ startedAt: minutesAgo(50), budgetMs: 20 * 60_000, status: "running" });
 
   withServer();
-  reconcileWorkspace(WORKSPACE);
+  await reconcileWorkspace(WORKSPACE);
 
   const after = JSON.parse(
     fs.readFileSync(path.join(workspaceStateDir(WORKSPACE.slug), "jobs", `${runaway.id}.json`), "utf8")
@@ -128,7 +128,7 @@ test("a job that really did exceed its budget while working is still failed", ()
   assert.match(after.error, /budget/);
 });
 
-test("markPolled advances the clean-poll bound", () => {
+test("markPolled advances the clean-poll bound", async () => {
   const before = job({ startedAt: minutesAgo(10), lastPolledAt: minutesAgo(9) });
   const polled = markPolled(before);
 

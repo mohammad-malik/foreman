@@ -9,12 +9,22 @@
  * Each job is announced exactly once. Being told three times that the same job
  * finished would be worse than not being told at all, so a reported timestamp
  * is written as soon as it is mentioned.
+ *
+ * Announced to the right session. State is global to the machine, and the hook
+ * fires in every Claude session that has the plugin. Announcing every finished
+ * job everywhere meant the first session to end a turn claimed the report, so
+ * the session that dispatched a job routinely never heard about it, and every
+ * other session was told about work in repositories it had never touched. A
+ * job is now announced in the session that dispatched it. Only when that
+ * session has evidently gone (the job has sat unclaimed for a while) is it
+ * offered to a session working in the same repository.
  */
 
-import { listWorkspaces } from "../registry.mjs";
+import { listWorkspaces, findWorkspaceFor } from "../registry.mjs";
 import { activeJobs, hasActiveJobs, markReported, unreportedJobs } from "../jobs.mjs";
 import { reconcileAll } from "../reconcile.mjs";
 import { sweep } from "../servers.mjs";
+import { oneLine } from "../render.mjs";
 import { collectResult } from "./result.mjs";
 
 // Well inside the Stop hook's 30s budget, leaving room for the sweep and for
@@ -22,7 +32,54 @@ import { collectResult } from "./result.mjs";
 const POLL_DEADLINE_MS = 10_000;
 const POLL_REQUEST_TIMEOUT_MS = 4_000;
 
-export async function notify() {
+/**
+ * How long a finished job waits for its own session before another session in
+ * the same repository may announce it. Long enough that a session mid-thought
+ * is not pre-empted; short enough that a job whose session was closed is not
+ * lost until someone remembers to ask.
+ */
+const ORPHAN_AFTER_MS = 10 * 60 * 1000;
+
+/** The session id Claude Code exposes to commands it runs, if any. */
+export function currentSessionID(env = process.env) {
+  return env.CLAUDE_CODE_SESSION_ID || env.CLAUDE_SESSION_ID || null;
+}
+
+/**
+ * Whether this hook invocation should announce this job. `context` is what
+ * the hook read from Claude Code: the session id and working directory.
+ */
+export function shouldAnnounce(job, context, now = Date.now()) {
+  const { sessionID = null, cwd = null } = context ?? {};
+
+  // A job with no recorded session predates this rule, or was dispatched from
+  // outside Claude Code. Anyone may announce it.
+  if (!job.dispatchSessionID) {
+    return true;
+  }
+  if (sessionID && job.dispatchSessionID === sessionID) {
+    return true;
+  }
+
+  // Not ours. Offer it to a session in the same repository once it has gone
+  // unclaimed long enough to suggest its own session is gone. A blocked job is
+  // offered the same way: a permission nobody can see is a job nobody can save.
+  const since = Date.parse(job.finishedAt ?? job.awaitingSince ?? job.updatedAt ?? job.createdAt ?? "");
+  if (Number.isNaN(since) || now - since < ORPHAN_AFTER_MS) {
+    return false;
+  }
+  if (!cwd) {
+    return false;
+  }
+  try {
+    const workspace = findWorkspaceFor(cwd);
+    return Boolean(workspace) && workspace.slug === job.slug;
+  } catch {
+    return false;
+  }
+}
+
+export async function notify(context = {}) {
   const workspaces = listWorkspaces();
   if (workspaces.length === 0) {
     return "";
@@ -48,6 +105,7 @@ export async function notify() {
   // the hook is killed and taking the sweep and the notifications down with
   // it. Jobs not reached simply wait for the next turn.
   const deadline = Date.now() + POLL_DEADLINE_MS;
+  const polled = new Map();
 
   for (const workspace of workspaces) {
     for (const job of activeJobs(workspace.slug)) {
@@ -55,17 +113,17 @@ export async function notify() {
         break;
       }
       try {
-        await collectResult(workspace.slug, job.id, { timeout: POLL_REQUEST_TIMEOUT_MS });
+        polled.set(job.id, await collectResult(workspace.slug, job.id, { timeout: POLL_REQUEST_TIMEOUT_MS }));
       } catch {
         // Unreachable server or a vanished session. Reconciliation handles it.
       }
     }
   }
 
-  reconcileAll(workspaces);
+  await reconcileAll(workspaces);
   await sweep(workspaces, { hasRunningJobs: hasActiveJobs }).catch(() => []);
 
-  const pending = unreportedJobs(workspaces);
+  const pending = unreportedJobs(workspaces).filter((job) => shouldAnnounce(job, context));
   if (pending.length === 0) {
     return "";
   }
@@ -73,14 +131,23 @@ export async function notify() {
   const lines = [];
 
   for (const job of pending) {
+    // `job` was read from disk AFTER reconciliation, so it carries a budget or
+    // server-gone failure the poll above could not have seen. The poll result is
+    // not reused as the record: it predates reconcile and announced a job as
+    // still running that had just been failed.
     let current = job;
 
-    // Refresh before announcing, so a job that finished while nobody was
-    // looking is reported with its real outcome rather than its last guess.
-    try {
-      current = await collectResult(job.slug, job.id);
-    } catch {
-      // Report what we have.
+    // A job that finished while nobody was looking, and was not reached by the
+    // poll above, is refreshed before it is announced so the report carries its
+    // real outcome. The same short timeout applies: the first poll was bounded
+    // and this one has to be too, or a wedged server makes the hook overrun its
+    // own budget and nothing is ever announced.
+    if (!polled.has(job.id) && Date.now() < deadline + POLL_DEADLINE_MS) {
+      try {
+        current = await collectResult(job.slug, job.id, { timeout: POLL_REQUEST_TIMEOUT_MS });
+      } catch {
+        // Report what we have.
+      }
     }
 
     if (current.status === "awaiting_permission") {
@@ -88,7 +155,7 @@ export async function notify() {
       const first = requests[0];
       lines.push(
         `external-agents: job ${current.id} (${current.qualified ?? current.alias}) is waiting for permission` +
-          (first ? ` to ${first.action}` : "") +
+          (first ? ` to ${oneLine(first.action ?? first.type ?? "act", 40)}` : "") +
           `. Approve with /external-agents:permit allow, or reject it with /external-agents:permit reject`
       );
       // Deliberately not marked reported: it is still blocked, and it should
@@ -96,11 +163,16 @@ export async function notify() {
       continue;
     }
 
+    if (current.reportedAt !== null) {
+      // Announced by `result` or another session between our listing and now.
+      continue;
+    }
+
     const changed = current.changes?.changed?.length ?? 0;
     const summary =
       current.status === "completed"
         ? `finished, ${changed} file(s) changed`
-        : `${current.status}${current.error ? `: ${current.error}` : ""}`;
+        : `${current.status}${current.error ? `: ${oneLine(current.error, 200)}` : ""}`;
 
     lines.push(
       `external-agents: job ${current.id} (${current.qualified ?? current.alias}) ${summary}. See it with /external-agents:result ${current.id}`

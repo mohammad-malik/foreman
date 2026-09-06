@@ -9,6 +9,16 @@
  *
  * Records are stored per workspace, which keeps one repository's history from
  * growing into a listing of every other repository you have ever delegated in.
+ *
+ * Several processes write the same record. A `wait` in one session, the Stop
+ * hook in another, a `permit` typed by hand: all of them read a job, spend
+ * seconds talking to a server, then write. Every write therefore goes through
+ * `updateJob`, which reloads the record from disk at the last moment and lays
+ * the patch over what is there now rather than over the copy the caller read
+ * earlier. Without that, a `cancel` was overwritten back to "running" by a poll
+ * that had loaded the job before the cancel, and a job announced by the Stop
+ * hook lost its `reportedAt` to a poll that finished a second later and was
+ * announced twice.
  */
 
 import { randomBytes } from "node:crypto";
@@ -30,6 +40,21 @@ function jobsDir(slug) {
 
 function jobFile(slug, jobID) {
   return path.join(jobsDir(slug), `${jobID}.json`);
+}
+
+/**
+ * Where a job's baseline file copies live. They are kept out of the record
+ * itself because `listJobs` parses every record on every command, and a job
+ * dispatched with --allow-dirty-tree can carry up to 16 MB of copied files.
+ * Reading that a hundred times over to print a status line is not acceptable.
+ */
+function baselineContentsFile(slug, jobID) {
+  return path.join(jobsDir(slug), `${jobID}.baseline-contents.json`);
+}
+
+/** The codex backend's per-job scratch directory. Mirrors codex-job.mjs. */
+function codexDir(slug, jobID) {
+  return path.join(workspaceStateDir(slug), "codex", jobID);
 }
 
 export function newJobID() {
@@ -54,9 +79,62 @@ export function createJob(workspace, fields) {
     ...fields
   };
 
+  job.baseline = detachBaselineContents(job.slug, job.id, job.baseline);
+
   saveJob(job);
   pruneJobs(workspace.slug);
   return job;
+}
+
+/**
+ * Move a baseline's file copies into their side file and leave a pointer.
+ * Idempotent: a baseline that has already been detached is returned as is.
+ */
+function detachBaselineContents(slug, jobID, baseline) {
+  if (!baseline || !baseline.contents || Object.keys(baseline.contents).length === 0) {
+    return baseline;
+  }
+
+  const file = baselineContentsFile(slug, jobID);
+  writeJsonAtomic(file, baseline.contents);
+
+  const { contents, ...rest } = baseline;
+  return { ...rest, contentsFile: file };
+}
+
+/**
+ * A job's baseline with its file copies attached, ready for revert.
+ *
+ * Records written before the side file existed carry `contents` inline, and
+ * those still restore. A record whose side file has gone reports that: revert
+ * then skips those paths with the reason rather than deleting them.
+ */
+export function hydrateBaseline(job) {
+  const baseline = job?.baseline;
+  if (!baseline) {
+    return null;
+  }
+  if (baseline.contents) {
+    return baseline;
+  }
+  if (!baseline.contentsFile) {
+    return { ...baseline, contents: {} };
+  }
+
+  const contents = readJsonIfPresent(baseline.contentsFile);
+  if (contents === null) {
+    return {
+      ...baseline,
+      contents: {},
+      skippedContents: Object.fromEntries(
+        Object.keys(baseline.hashes ?? {}).map((entry) => [
+          entry,
+          baseline.skippedContents?.[entry] ?? "its saved copy is missing from the state directory"
+        ])
+      )
+    };
+  }
+  return { ...baseline, contents };
 }
 
 export function saveJob(job) {
@@ -64,8 +142,41 @@ export function saveJob(job) {
   return job;
 }
 
+/**
+ * Apply a patch to the record as it is on disk NOW, not to the caller's copy.
+ *
+ * `changes` may be an object, or a function of the fresh record that returns
+ * one, for patches whose values depend on the current state (folding a wait
+ * into blockedMs, for instance). Two facts are sticky whatever the patch says:
+ *
+ * - A terminal status never goes back to an active one. The only way out of
+ *   "cancelled" or "failed" is a new job. A poll that was mid-flight when the
+ *   cancel landed must not resurrect the work.
+ * - A frozen change set stays frozen. Once a job has finished and its diff has
+ *   been recorded, later recomputation would describe the tree now, not what
+ *   the job did.
+ */
 export function updateJob(job, changes) {
-  return saveJob({ ...job, ...changes });
+  const fresh = loadJob(job.slug, job.id) ?? job;
+  const patch = typeof changes === "function" ? changes(fresh) : changes;
+  const merged = { ...fresh, ...patch };
+
+  // Terminal is terminal: neither back to active, nor across to a different
+  // terminal state. A poll that loaded the job before a cancel must not turn
+  // "cancelled" into "completed" on the strength of the transcript it fetched.
+  if (TERMINAL_STATUSES.has(fresh.status) && patch.status !== undefined && patch.status !== fresh.status) {
+    merged.status = fresh.status;
+    merged.finishedAt = fresh.finishedAt;
+    merged.error = fresh.error;
+  }
+
+  if (fresh.finishedAt && fresh.changes && patch.changes !== undefined) {
+    merged.changes = fresh.changes;
+  }
+
+  merged.baseline = detachBaselineContents(merged.slug, merged.id, merged.baseline);
+
+  return saveJob(merged);
 }
 
 export function loadJob(slug, jobID) {
@@ -81,7 +192,7 @@ export function listJobs(slug) {
   }
 
   return names
-    .filter((name) => name.endsWith(".json"))
+    .filter((name) => name.endsWith(".json") && !name.endsWith(".baseline-contents.json"))
     .map((name) => readJsonIfPresent(path.join(jobsDir(slug), name)))
     .filter(Boolean)
     .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
@@ -94,15 +205,15 @@ export function listJobs(slug) {
  * nobody wants to type a repository path to ask how their job is doing.
  */
 export function findJob(workspaces, jobID) {
+  if (!jobID) {
+    return latestJob(workspaces);
+  }
+
   for (const workspace of workspaces) {
-    const job = jobID ? loadJob(workspace.slug, jobID) : listJobs(workspace.slug)[0];
+    const job = loadJob(workspace.slug, jobID);
     if (job) {
       return job;
     }
-  }
-
-  if (!jobID) {
-    return null;
   }
 
   return null;
@@ -137,7 +248,11 @@ export function markReported(job) {
   return updateJob(job, { reportedAt: new Date().toISOString() });
 }
 
-/** Keep history bounded. Active jobs are never pruned, however old they look. */
+/**
+ * Keep history bounded. Active jobs are never pruned, however old they look.
+ * Everything a job left behind goes with it: its record, its baseline copies,
+ * and the codex scratch directory holding its handoff and event log.
+ */
 function pruneJobs(slug) {
   const jobs = listJobs(slug);
   if (jobs.length <= MAX_JOBS_PER_WORKSPACE) {
@@ -148,11 +263,22 @@ function pruneJobs(slug) {
   const excess = jobs.length - MAX_JOBS_PER_WORKSPACE;
 
   for (const job of removable.slice(-excess)) {
+    removeJobFiles(slug, job.id);
+  }
+}
+
+export function removeJobFiles(slug, jobID) {
+  for (const file of [jobFile(slug, jobID), baselineContentsFile(slug, jobID)]) {
     try {
-      fs.unlinkSync(jobFile(slug, job.id));
+      fs.unlinkSync(file);
     } catch {
       // Nothing to do; it will be pruned next time.
     }
+  }
+  try {
+    fs.rmSync(codexDir(slug, jobID), { recursive: true, force: true });
+  } catch {
+    // A file still held open by a lingering process; next time.
   }
 }
 
@@ -200,12 +326,15 @@ export function blockedMs(job) {
  * to err in.
  */
 export function markAwaiting(job) {
-  if (job.awaitingSince) {
-    return job;
-  }
-
-  const since = job.lastPolledAt ?? new Date().toISOString();
-  return updateJob(job, { status: "awaiting_permission", awaitingSince: since });
+  return updateJob(job, (fresh) => {
+    if (fresh.awaitingSince) {
+      return {};
+    }
+    return {
+      status: "awaiting_permission",
+      awaitingSince: fresh.lastPolledAt ?? new Date().toISOString()
+    };
+  });
 }
 
 /**
@@ -220,16 +349,18 @@ export function markPolled(job) {
 
 /** Fold the wait into blockedMs and resume. */
 export function markResumed(job) {
-  const extra = job.awaitingSince
-    ? Math.max(0, Date.now() - Date.parse(job.awaitingSince))
-    : 0;
+  return updateJob(job, (fresh) => {
+    const extra = fresh.awaitingSince
+      ? Math.max(0, Date.now() - Date.parse(fresh.awaitingSince))
+      : 0;
 
-  return updateJob(job, {
-    status: "running",
-    awaitingSince: null,
-    // Work resumes now, so this is also the last moment it was known working.
-    lastPolledAt: new Date().toISOString(),
-    blockedMs: (job.blockedMs ?? 0) + extra
+    return {
+      status: "running",
+      awaitingSince: null,
+      // Work resumes now, so this is also the last moment it was known working.
+      lastPolledAt: new Date().toISOString(),
+      blockedMs: (fresh.blockedMs ?? 0) + extra
+    };
   });
 }
 

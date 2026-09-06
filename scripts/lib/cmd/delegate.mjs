@@ -14,13 +14,23 @@ import { reconcileAll } from "../reconcile.mjs";
 import { acquireServer, sweep, touch } from "../servers.mjs";
 import { detectVersion, loadInventory } from "../opencode.mjs";
 import { codexModels, detectCodexVersion, codexSignedIn } from "../codex.mjs";
-import { readCodexJob, startCodexJob } from "../codex-job.mjs";
+import { judgeCodexJob, readCodexJob, startCodexJob } from "../codex-job.mjs";
 import { resolveRoute } from "../routes.mjs";
 import { OpencodeApi } from "../opencode-api.mjs";
 import { captureBaseline, describeDirty, isGitRepository } from "../git-baseline.mjs";
 import { checkNamedPaths } from "../handoff-paths.mjs";
-import { createJob, hasActiveJobs, updateJob } from "../jobs.mjs";
-import { bullet, heading, keyValue } from "../render.mjs";
+import {
+  activeJobs,
+  createJob,
+  hasActiveJobs,
+  markAwaiting,
+  markPolled,
+  markReported,
+  TERMINAL_STATUSES,
+  updateJob
+} from "../jobs.mjs";
+import { bullet, keyValue } from "../render.mjs";
+import { currentSessionID } from "./notify.mjs";
 import { collectResult, renderResult } from "./result.mjs";
 
 export const ROLES = {
@@ -103,8 +113,17 @@ export async function delegate({
 
   // Housekeeping first: this is what replaces a resident supervisor.
   const allWorkspaces = listWorkspaces();
-  reconcileAll(allWorkspaces);
+  await reconcileAll(allWorkspaces);
   await sweep(allWorkspaces, { hasRunningJobs: hasActiveJobs });
+
+  // Validated up front, and not because a NaN is untidy: `--timeout abc` made
+  // the wait loop's deadline NaN, which never arrives, and `--budget abc`
+  // switched the budget off entirely.
+  for (const [name, value] of [["--timeout", timeoutSeconds], ["--budget", budgetSeconds]]) {
+    if (value !== undefined && (!Number.isFinite(value) || value <= 0)) {
+      throw new Error(`${name} must be a positive number of seconds, not "${value}".`);
+    }
+  }
 
   // Both backends' model lists, so resolution can verify whichever one ends up
   // running this. A backend that cannot be reached is omitted rather than
@@ -160,6 +179,24 @@ export async function delegate({
       );
     }
 
+    // Two write jobs in one tree cannot be told apart. Job B's baseline would
+    // hash job A's half-written files, and everything A wrote afterwards would
+    // land in B's change set as "modified again". The tree may still look
+    // clean at this moment if A has not written yet, so this is checked on the
+    // job records, not on git. --allow-dirty-tree already means "I accept mixed
+    // attribution", so it is the override here too.
+    const otherWriters = activeJobs(workspace.slug).filter((job) => job.access === "write");
+    if (otherWriters.length > 0 && !allowDirtyTree) {
+      throw new Error(
+        [
+          `${otherWriters.length} write job(s) are already active in ${workspace.root}:`,
+          ...otherWriters.map((job) => `  ${job.id}  ${job.qualified ?? job.alias}  ${job.status}`),
+          "",
+          "A second writer's edits could not be told from the first's. Wait for it, cancel it, use a separate worktree, or pass --allow-dirty-tree to accept mixed attribution."
+        ].join("\n")
+      );
+    }
+
     baseline = captureBaseline(workspace.root);
 
     if (baseline.dirty && !allowDirtyTree) {
@@ -197,14 +234,10 @@ export async function delegate({
   const server = await acquireServer(workspace);
   const api = new OpencodeApi(server);
 
-  const session = await api.createSession({
-    agent,
-    providerID: resolved.providerID,
-    modelID: resolved.modelID,
-    directory: workspace.root
-  });
-
-  const job = createJob(workspace, {
+  // The record exists before the session does. A queued job counts as active,
+  // which is what stops another session's acquireServer from reclaiming this
+  // server in the moment between creating the session and writing it down.
+  let job = createJob(workspace, {
     task,
     alias: model,
     route,
@@ -214,12 +247,31 @@ export async function delegate({
     agent,
     role,
     access: write ? "write" : "read",
-    sessionID: session.id,
     serverUrl: server.url,
     baseline,
     budgetMs: budgetSeconds ? budgetSeconds * 1000 : DEFAULT_BUDGET_MS,
+    dispatchSessionID: currentSessionID(),
+    status: "queued"
+  });
+
+  let session;
+  try {
+    session = await api.createSession({
+      agent,
+      providerID: resolved.providerID,
+      modelID: resolved.modelID,
+      directory: workspace.root
+    });
+  } catch (error) {
+    updateJob(job, { status: "failed", finishedAt: new Date().toISOString(), error: error.message });
+    throw error;
+  }
+
+  job = updateJob(job, {
+    sessionID: session.id,
     status: "running",
-    startedAt: new Date().toISOString()
+    startedAt: new Date().toISOString(),
+    lastPolledAt: new Date().toISOString()
   });
 
   try {
@@ -284,8 +336,20 @@ export async function delegate({
     return header.join("\n");
   }
 
-  const finished = await collectResult(job.slug, job.id);
+  const finished = await reportForeground(job);
   return [...header, "", renderResult(finished)].join("\n");
+}
+
+/**
+ * Collect a foreground job's outcome and, if it is over, mark it reported.
+ * Printing the result here IS the report; without the mark the Stop hook
+ * announced the same job again one turn later.
+ */
+async function reportForeground(job) {
+  const finished = await collectResult(job.slug, job.id);
+  return TERMINAL_STATUSES.has(finished.status) && finished.reportedAt === null
+    ? markReported(finished)
+    : finished;
 }
 
 /**
@@ -345,6 +409,7 @@ async function dispatchCodex({
     codexVersion: version.raw,
     baseline,
     budgetMs: budgetSeconds ? budgetSeconds * 1000 : DEFAULT_BUDGET_MS,
+    dispatchSessionID: currentSessionID(),
     status: "running",
     startedAt: new Date().toISOString()
   });
@@ -421,7 +486,7 @@ async function dispatchCodex({
     return header.join("\n");
   }
 
-  const finished = await collectResult(running.slug, running.id);
+  const finished = await reportForeground(running);
   return [...header, "", renderResult(finished)].join("\n");
 }
 
@@ -432,12 +497,18 @@ async function dispatchCodex({
  * finished its turn, while the process may still be flushing. Polling is slower
  * than on the OpenCode path because there is no permission request that might
  * need surfacing early.
+ *
+ * Judged, not merely pinged. Windows hands a freed pid to the next process
+ * within seconds when other agents are spawning shells, and a bare liveness
+ * check then waited the full five minutes on a stranger's process. judgeCodexJob
+ * confirms the identity of a live pid once the turn is over.
  */
 async function waitForCodex(job, waitMs) {
   const deadline = Date.now() + waitMs;
 
   for (;;) {
-    if (!readCodexJob(job).alive) {
+    const state = readCodexJob(job);
+    if (!state.alive || judgeCodexJob(job, state).status !== "running") {
       return true;
     }
     if (Date.now() >= deadline) {
@@ -462,7 +533,11 @@ async function waitForJob(api, job, waitMs) {
   for (;;) {
     const pending = await api.pendingPermissions(job.sessionID).catch(() => []);
     if (Array.isArray(pending) && pending.length > 0) {
-      updateJob(job, { status: "awaiting_permission" });
+      // Stamped through markAwaiting, so the budget clock stops here and now.
+      // A bare status write left awaitingSince unset, and when the wait was
+      // eventually stamped by a later poll it was credited from that poll
+      // rather than from this moment, which failed a blocked job as a runaway.
+      markAwaiting(job);
       return "permission";
     }
 
@@ -475,6 +550,9 @@ async function waitForJob(api, job, waitMs) {
       return "timeout";
     }
 
+    // A clean poll: the job was seen working now, which is the bound any later
+    // permission wait is credited from.
+    markPolled(job);
     touch(job.slug);
     await new Promise((resolve) => setTimeout(resolve, interval));
     interval = Math.min(interval * 1.4, 5000);

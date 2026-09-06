@@ -175,7 +175,7 @@ export function captureBaseline(root) {
     // them back. Without this an untracked file that existed before the job
     // has nothing to restore from, and the only options are to delete it
     // (losing the user's work) or leave the agent's edit in place.
-    const stored = readForRestore(absolute, budget);
+    const stored = readForRestore(absolute, budget, entry.path);
     if (stored.kind === "skipped") {
       // Recorded so revert can say why it will not touch this path, instead of
       // silently leaving the agent's edit in place.
@@ -214,7 +214,36 @@ export function captureBaseline(root) {
 const RESTORE_SIZE_CAP = 1024 * 1024;
 const RESTORE_TOTAL_CAP = 16 * 1024 * 1024;
 
-function readForRestore(absolutePath, budget) {
+/**
+ * Files never copied into a job record, whatever their size.
+ *
+ * These mirror the read denials in config/opencode-agents.json. It would be
+ * absurd to deny the agent `.env` and then, under --allow-dirty-tree, copy a
+ * dirty `.env` base64-encoded into a job record it can be asked to report on.
+ * The hash is still recorded so a change to the file is still attributed; only
+ * the bytes are withheld, and revert says so for that path.
+ */
+const SECRET_BASENAMES = new Set(["id_rsa", "id_ed25519", "credentials"]);
+
+export function isSecretPath(relativePath) {
+  const base = path.basename(relativePath.replace(/\\/g, "/"));
+  if (base === ".env.example") {
+    return false;
+  }
+  if (base === ".env" || base.startsWith(".env.")) {
+    return true;
+  }
+  if (base.endsWith(".pem")) {
+    return true;
+  }
+  return SECRET_BASENAMES.has(base);
+}
+
+function readForRestore(absolutePath, budget, relativePath = path.basename(absolutePath)) {
+  if (isSecretPath(relativePath)) {
+    return { kind: "skipped", reason: "it looks like a secret (.env, key or credential file), which is never copied into a job record" };
+  }
+
   try {
     const stat = fs.lstatSync(absolutePath);
 

@@ -16,17 +16,38 @@
  * It never throws. A hook that fails on every turn would make the whole
  * session unpleasant for the sake of a status line, so any failure here exits
  * quietly. The information is available from `/external-agents:status` anyway.
+ *
+ * It reads the JSON Claude Code writes to its stdin for the session id and
+ * working directory, which is how a job is announced in the session that
+ * dispatched it rather than in whichever session's turn happened to end first.
  */
 
+import fs from "node:fs";
 import process from "node:process";
 
 import { notify } from "./lib/cmd/notify.mjs";
+
+function readHookInput() {
+  if (process.stdin.isTTY) {
+    return {};
+  }
+  try {
+    const raw = fs.readFileSync(0, "utf8").trim();
+    return raw === "" ? {} : JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
 
 async function main() {
   let message = "";
 
   try {
-    message = await notify();
+    const input = readHookInput();
+    message = await notify({
+      sessionID: typeof input.session_id === "string" ? input.session_id : null,
+      cwd: typeof input.cwd === "string" ? input.cwd : process.cwd()
+    });
   } catch {
     // Deliberately silent. See above.
     return;

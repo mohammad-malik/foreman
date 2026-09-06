@@ -61,17 +61,48 @@ test("a session with no assistant reply yields null, not a guess", () => {
   assert.equal(finalAssistantText([]), null);
 });
 
-test("an assistant message with only tool parts is skipped for older text", () => {
+test("an assistant message with only tool parts yields null when nothing else in the turn spoke", () => {
   const onlyTools = [NEWEST_FIRST[1], NEWEST_FIRST[2]];
   assert.equal(finalAssistantText(onlyTools), null);
 });
 
-test("tool calls are extracted with name and status", () => {
+test("the answer comes from the current turn, never from an earlier one", () => {
+  // A second user prompt starts a new turn. Text from before it answered the
+  // previous question, and reporting it as this turn's answer misled the
+  // caller into thinking a run that produced nothing had produced something.
+  const twoTurns = [
+    { id: "u2", type: "user", time: { created: 5 }, text: "Now do the other thing" },
+    ...NEWEST_FIRST
+  ];
+  assert.equal(finalAssistantText(twoTurns), null);
+
+  const withAnswer = [
+    { id: "a3", type: "assistant", time: { created: 6, completed: 7 }, finish: "stop", content: [{ type: "text", text: "second" }] },
+    ...twoTurns
+  ];
+  assert.equal(finalAssistantText(withAnswer), "second");
+});
+
+test("within a turn, a silent final step falls back to the last thing the model said", () => {
+  const endedOnTool = [
+    { id: "a9", type: "assistant", time: { created: 8, completed: 9 }, finish: "stop", content: [{ type: "tool", name: "read", state: { status: "completed" } }] },
+    ...NEWEST_FIRST
+  ];
+  assert.equal(finalAssistantText(endedOnTool), "hello");
+});
+
+test("tool calls are extracted with name and status, and inputs are summarised not stored", () => {
   const calls = toolCalls(NEWEST_FIRST);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].tool, "read");
   assert.equal(calls[0].status, "completed");
-  assert.deepEqual(calls[0].input, { path: "README.md" });
+  assert.equal(calls[0].input, undefined);
+  assert.match(calls[0].detail, /README\.md/);
+
+  // An edit's input is a whole file body. Storing every one made job records
+  // grow by megabytes; the summary is capped.
+  const huge = [{ type: "assistant", content: [{ type: "tool", name: "edit", state: { status: "completed", input: { content: "x".repeat(50_000) } } }] }];
+  assert.ok(toolCalls(huge)[0].detail.length < 300);
 });
 
 test("usage totals sum across assistant messages only", () => {
@@ -164,4 +195,36 @@ test("a session with no assistant reply yet is working", async () => {
 
   assert.equal(state.state, "working");
   assert.equal(state.assistants, 0);
+});
+
+test("a turn that ended on anything but stop carries an error, so the job fails rather than completes", async () => {
+  // A Moonshot 429 or a Fireworks timeout mid-run ends the turn with finish
+  // "error". This used to read as idle with no qualification, and the job was
+  // reported completed with whatever preamble text had been produced.
+  for (const finish of ["length", "error", "aborted"]) {
+    const messages = [
+      { type: "assistant", time: { created: 2, completed: 3 }, finish, content: [{ type: "text", text: "I'll start by..." }] }
+    ];
+    const state = await fakeApi(messages).turnState("ses_x");
+    assert.equal(state.state, "idle", finish);
+    assert.match(state.error, new RegExp(finish), finish);
+  }
+
+  const clean = [{ type: "assistant", time: { created: 2, completed: 3 }, finish: "stop", content: [] }];
+  assert.equal((await fakeApi(clean).turnState("ses_x")).error, null);
+});
+
+test("a message the server marked as errored is over, with the provider's reason", async () => {
+  const messages = [
+    {
+      type: "assistant",
+      time: { created: 2 },
+      error: { name: "APIError", data: { message: "429 rate limit exceeded\nretry later" } },
+      content: []
+    }
+  ];
+  const state = await fakeApi(messages).turnState("ses_x");
+  assert.equal(state.state, "idle");
+  assert.match(state.error, /429 rate limit/);
+  assert.doesNotMatch(state.error, /\n/);
 });

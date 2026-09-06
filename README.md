@@ -91,10 +91,27 @@ honest; until then that list is empty.
 
 - Delegate anywhere you have not registered, or send content from a repository without `--allow-external`.
 - Infer write access. `--write` is always explicit.
-- Write into a dirty tree without `--allow-dirty-tree`, because the agent's edits could not be told from yours.
+- Write into a dirty tree, or start a second write job in a repository that already has one running, without `--allow-dirty-tree`, because the agent's edits could not be told from yours or from each other's.
 - Answer the agent's permission requests for you.
 - Save a standing "always allow" rule.
 - Touch your OpenCode config files, or manage credentials of its own.
+- Copy a `.env`, key or credential file into a job record, even under `--allow-dirty-tree`. Revert skips those paths and says so.
+- Revert a job that is still running, or revert anything outside the job's frozen change set. Files you edited yourself after the job finished are left alone and named.
+
+## Running many agents at once
+
+State is shared across every Claude session on the machine, so a few things are scoped to keep sessions from talking over each other.
+
+- Finished jobs are announced in the session that dispatched them. A job whose session has gone quiet for ten minutes is offered to a session working in the same repository instead.
+- `wait` with no ids covers the jobs this session dispatched and any active job in the current repository. `--all` waits on everything.
+- A job past its budget has its work stopped (the session interrupted, or the codex process killed) before it is marked failed. Its edits stay on disk and the final diff is collected afterwards.
+- A provider error mid-run (a rate limit, a timeout, a length cut-off) fails the job with the provider's reason. It is never reported as completed.
+
+## What the agent can see
+
+Provider API keys reach the OpenCode server through its environment, and every shell command the agent runs inherits that environment. The agent configs deny the obvious ways of printing it (`env`, `printenv`, `set`, `Get-ChildItem env:`, anything mentioning `API_KEY`), but a denylist is not a proof. Treat an unattended write agent as able to read the keys its server was started with, and rotate them if a transcript ever shows one.
+
+Only provider, model, formatter and LSP settings from your own OpenCode config are carried into the servers this plugin starts. MCP servers, plugins, instructions and sharing are not, so an external model cannot reach tools you set up for yourself. `share` is forced off.
 
 ## Notes
 

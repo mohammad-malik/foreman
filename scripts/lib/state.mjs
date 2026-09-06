@@ -160,7 +160,41 @@ export function saveConfig(config) {
   const tmp = `${file}.${process.pid}.tmp`;
 
   fs.writeFileSync(tmp, `${payload}\n`, "utf8");
-  fs.renameSync(tmp, file);
+  renameWithRetry(tmp, file);
+}
+
+/**
+ * Rename over a target that another process may have open.
+ *
+ * Node opens files with FILE_SHARE_DELETE, so a reader of ours does not block
+ * the rename, but antivirus scanners and search indexers open files without it
+ * and hold them for a few milliseconds. On Windows that surfaces as EPERM or
+ * EBUSY from an otherwise correct rename, and with several sessions writing job
+ * records it happens often enough to kill a `wait` mid-flight. A short retry
+ * covers it; anything that persists is reported as the error it is.
+ */
+export function renameWithRetry(from, to, { attempts = 6, delayMs = 25 } = {}) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      fs.renameSync(from, to);
+      return;
+    } catch (error) {
+      const transient = error.code === "EPERM" || error.code === "EBUSY" || error.code === "EACCES";
+      if (!transient || attempt >= attempts) {
+        try {
+          fs.unlinkSync(from);
+        } catch {
+          // The temp file is the lesser problem.
+        }
+        throw error;
+      }
+      sleepSync(delayMs * (attempt + 1));
+    }
+  }
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
 /**
@@ -174,7 +208,7 @@ export function writeJsonAtomic(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  fs.renameSync(tmp, file);
+  renameWithRetry(tmp, file);
 }
 
 export function readJsonIfPresent(file) {

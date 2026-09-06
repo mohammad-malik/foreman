@@ -95,8 +95,13 @@ RUNTIME delegate --dir "<repo>" --model <alias> --route <route> --role <role> [-
 - Always `--background` when there is more than one task, or when the task is
   substantial. A real task takes ten to twenty-five minutes.
 - Several tasks means several dispatches. They run concurrently; do not wait
-  for one before starting the next.
+  for one before starting the next. Two `--write` jobs in the same repository
+  are refused, because their edits could not be told apart: give each writer
+  its own `git worktree`, or run them one after another.
 - Use a `git worktree` for write work touching code this plugin itself runs on.
+- A job that did not reach `completed` did not do the work. A provider error
+  (a rate limit, a timeout) fails the job with the provider's reason; it is
+  never reported as completed with partial text.
 
 If it reports the workspace is unregistered or delegation is off, show the user
 the exact `register` line and stop. Do not register on their behalf: that flag
@@ -105,10 +110,14 @@ is their decision about sending code off the machine.
 ## Waiting
 
 ```
-RUNTIME wait --timeout 3600
+RUNTIME wait <job-id> [<job-id>...] --timeout 3600
 ```
 
-Blocks until every active job settles. Do not poll in a loop.
+Blocks until those jobs settle. Do not poll in a loop. Pass the ids you
+dispatched: with none, `wait` covers the jobs this session dispatched plus any
+active job in the current repository, and other sessions' work in other
+repositories is left out on purpose. `--all` waits on everything on the
+machine, which is almost never what a user meant.
 
 **Start this in the same turn as the dispatch, before saying anything about
 waiting.** A dispatched job with nothing watching it is not being waited on, and

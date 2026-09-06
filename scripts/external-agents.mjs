@@ -31,9 +31,10 @@ Read-only:
   workspaces                    List registered workspaces
   servers                       Show the OpenCode server for each workspace
   resolve <spoken name>         Turn "fast glm 5.3" into an exact model+route
-  wait [job-ids...] [--timeout <s>]
-                                Block until those jobs finish (all active ones
-                                if none named)
+  wait [job-ids...] [--timeout <s>] [--all]
+                                Block until those jobs finish. With no ids:
+                                this session's jobs and any in the current
+                                repository; --all means every job anywhere
   status [job-id]               List jobs, or show one
   result [job-id]               Collect and show a job's outcome
 
@@ -166,8 +167,8 @@ const COMMANDS = {
         // only one there is.
         directory: dir ?? options.dir,
         wait: !options.background,
-        timeoutSeconds: options.timeout ? Number(options.timeout) : undefined,
-        budgetSeconds: options.budget ? Number(options.budget) : undefined,
+        timeoutSeconds: positiveSeconds("--timeout", options.timeout),
+        budgetSeconds: positiveSeconds("--budget", options.budget),
         allowDirtyTree: Boolean(options["allow-dirty-tree"]),
         unattended: Boolean(options.unattended)
       })}\n`
@@ -202,7 +203,7 @@ const COMMANDS = {
     return 0;
   },
 
-  revert: (argv) => {
+  revert: async (argv) => {
     const { positionals } = parseArgs(argv, {});
     const jobID = positionals[0];
 
@@ -217,7 +218,7 @@ const COMMANDS = {
       );
     }
 
-    process.stdout.write(`${revert(jobID)}\n`);
+    process.stdout.write(`${await revert(jobID)}\n`);
     return 0;
   },
 
@@ -230,10 +231,11 @@ const COMMANDS = {
   },
 
   wait: async (argv) => {
-    const { options, positionals } = parseArgs(argv, { valueOptions: ["timeout"] });
+    const { options, positionals } = parseArgs(argv, { valueOptions: ["timeout"], boolOptions: ["all"] });
     process.stdout.write(
       `${await waitForJobs(positionals, {
-        timeoutSeconds: options.timeout ? Number(options.timeout) : 3600
+        timeoutSeconds: positiveSeconds("--timeout", options.timeout) ?? 3600,
+        all: Boolean(options.all)
       })}
 `
     );
@@ -248,6 +250,22 @@ const COMMANDS = {
     return 0;
   }
 };
+
+/**
+ * A numeric option, or undefined when omitted. Anything else is refused here:
+ * a NaN that reaches a deadline comparison is never exceeded, so `--timeout abc`
+ * waited forever and `--budget abc` switched the budget off.
+ */
+function positiveSeconds(name, value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    throw new Error(`${name} must be a positive number of seconds, not "${value}".`);
+  }
+  return number;
+}
 
 async function main() {
   // A slash command hands the whole argument string over as one entry, because
