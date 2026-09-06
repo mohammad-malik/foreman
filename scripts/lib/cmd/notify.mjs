@@ -172,7 +172,7 @@ export async function notify(context = {}) {
     const summary =
       current.status === "completed"
         ? `finished, ${changed} file(s) changed`
-        : `${current.status}${current.error ? `: ${oneLine(current.error, 200)}` : ""}`;
+        : `${current.status}${current.error ? `: ${oneLine(current.error, 200).replace(/\.$/, "")}` : ""}`;
 
     lines.push(
       `external-agents: job ${current.id} (${current.qualified ?? current.alias}) ${summary}. See it with /external-agents:result ${current.id}`
