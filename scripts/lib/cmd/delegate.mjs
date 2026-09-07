@@ -1,7 +1,7 @@
 /**
  * Dispatch one handoff to one external model.
  *
- * The gate on this is the slash command: `/external-agents:delegate` carries
+ * The gate on this is the slash command: `/foreman:delegate` carries
  * `disable-model-invocation: true`, so Claude cannot trigger a delegation on
  * its own initiative. If the runtime is ever reached another way, the Bash
  * approval shows the literal command including the model and the write flag,
@@ -320,7 +320,7 @@ export async function delegate({
   if (!wait) {
     header.push("");
     header.push(`Running in the background. It will be reported when it finishes, or run:`);
-    header.push(bullet(`external-agents result ${job.id}`));
+    header.push(bullet(`foreman result ${job.id}`));
     return header.join("\n");
   }
 
@@ -332,7 +332,7 @@ export async function delegate({
     header.push(
       `Still running after ${Math.round(waitMs / 1000)}s. It keeps going in the background; check with:`
     );
-    header.push(bullet(`external-agents result ${job.id}`));
+    header.push(bullet(`foreman result ${job.id}`));
     return header.join("\n");
   }
 
@@ -470,7 +470,7 @@ async function dispatchCodex({
   if (!wait) {
     header.push("");
     header.push("Running in the background. It will be reported when it finishes, or run:");
-    header.push(bullet(`external-agents result ${running.id}`));
+    header.push(bullet(`foreman result ${running.id}`));
     return header.join("\n");
   }
 
@@ -482,7 +482,7 @@ async function dispatchCodex({
     header.push(
       `Still running after ${Math.round(waitMs / 1000)}s. It keeps going in the background; check with:`
     );
-    header.push(bullet(`external-agents result ${running.id}`));
+    header.push(bullet(`foreman result ${running.id}`));
     return header.join("\n");
   }
 

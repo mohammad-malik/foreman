@@ -194,8 +194,8 @@ export async function waitForJobs(jobIDs = [], { timeoutSeconds = 3600, all = fa
           bullet(`${job.id} (${job.qualified ?? job.alias}) needs a permission answered`)
         ),
         "",
-        "Approve with:  /external-agents:permit allow",
-        "Or reject it:  /external-agents:permit reject",
+        "Approve with:  /foreman:permit allow",
+        "Or reject it:  /foreman:permit reject",
         "",
         "Then wait again."
       ].join("\n");

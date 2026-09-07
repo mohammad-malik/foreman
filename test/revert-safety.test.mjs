@@ -15,7 +15,7 @@ import { captureBaseline, diffAgainstBaseline, revertPaths } from "../scripts/li
  */
 
 function makeRepo() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ea-revert-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "foreman-revert-")));
   const git = (...args) =>
     execFileSync("git", ["-C", root, ...args], { encoding: "utf8", windowsHide: true });
 
@@ -222,7 +222,7 @@ test("reverting through a hard link does not truncate the linked file", { skip: 
 
   const baseline = captureBaseline(root);
 
-  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "ea-outside-"));
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-outside-"));
   const outside = path.join(outsideDir, "important.txt");
   fs.writeFileSync(outside, "must not be touched\n");
 
@@ -293,14 +293,14 @@ test("a planted temp file cannot be followed during restore", { skip: process.pl
 
   const baseline = captureBaseline(root);
 
-  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "ea-planted-"));
+  const outsideDir = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-planted-"));
   const outside = path.join(outsideDir, "victim.txt");
   fs.writeFileSync(outside, "must survive\n");
 
   // Plant links at every temp name the old scheme could have produced.
   for (const pid of [process.pid, process.pid + 1]) {
     try {
-      fs.symlinkSync(outside, `${target}.external-agents-${pid}.tmp`);
+      fs.symlinkSync(outside, `${target}.foreman-${pid}.tmp`);
     } catch {
       // Planting is best effort; the assertion below is what matters.
     }

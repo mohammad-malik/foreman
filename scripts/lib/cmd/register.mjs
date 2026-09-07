@@ -106,7 +106,7 @@ export async function unregister(rawPath, { force = false } = {}) {
         `${target.root} still has active jobs. Unregistering would stop its server and kill them.`,
         "",
         "Wait for them, cancel them, or pass --force to unregister anyway:",
-        `  /external-agents:unregister ${target.root} --force`
+        `  /foreman:unregister ${target.root} --force`
       ].join("\n")
     );
   }
@@ -131,7 +131,7 @@ export async function unregister(rawPath, { force = false } = {}) {
         "Unregistering now would leave that server running with nothing able to see or stop it.",
         stopped.reason === ACTIVE_JOBS_REASON
           ? "  Cancel its jobs, then try again."
-          : `  Try again, or force it: /external-agents:unregister ${target.root} --force`
+          : `  Try again, or force it: /foreman:unregister ${target.root} --force`
       ].join("\n")
     );
   }
@@ -154,7 +154,7 @@ export function workspaces() {
   const entries = listWorkspaces();
 
   if (entries.length === 0) {
-    return "No workspaces registered.\nRegister one with: /external-agents:register <path> [--allow-external]";
+    return "No workspaces registered.\nRegister one with: /foreman:register <path> [--allow-external]";
   }
 
   return [

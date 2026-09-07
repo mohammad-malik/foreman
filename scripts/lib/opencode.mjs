@@ -26,7 +26,7 @@ export class OpencodeError extends Error {
 }
 
 export function opencodeBinary() {
-  return process.env.EXTERNAL_AGENTS_OPENCODE_BIN || "opencode";
+  return process.env.FOREMAN_OPENCODE_BIN || "opencode";
 }
 
 function run(args, { timeout = 60_000 } = {}) {
@@ -41,7 +41,7 @@ function run(args, { timeout = 60_000 } = {}) {
     if (error.code === "ENOENT") {
       throw new OpencodeError(`OpenCode executable "${opencodeBinary()}" was not found on PATH.`, {
         code: "opencode_missing",
-        hint: "Install OpenCode, or set EXTERNAL_AGENTS_OPENCODE_BIN to its full path."
+        hint: "Install OpenCode, or set FOREMAN_OPENCODE_BIN to its full path."
       });
     }
     if (error.signal === "SIGTERM" || error.code === "ETIMEDOUT") {

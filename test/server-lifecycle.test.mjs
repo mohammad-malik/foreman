@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "ea-lifecycle-"));
-process.env.EXTERNAL_AGENTS_STATE_DIR = SCRATCH;
+const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-lifecycle-"));
+process.env.FOREMAN_STATE_DIR = SCRATCH;
 delete process.env.CLAUDE_PLUGIN_DATA;
 
 const { ACTIVE_JOBS_REASON, stopServer, sweep, serverStatus, IDLE_TTL_MS } = await import(

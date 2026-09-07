@@ -33,7 +33,7 @@ function findJobAnywhere(jobID) {
   if (!jobID) {
     const job = latestJob(workspaces);
     if (!job) {
-      throw new Error("No jobs yet. Start one with /external-agents:delegate.");
+      throw new Error("No jobs yet. Start one with /foreman:delegate.");
     }
     return { job, workspace: workspaces.find((entry) => entry.slug === job.slug) };
   }
@@ -359,7 +359,7 @@ export async function cancel(jobID) {
     // saying so plainly is better than letting that be discovered later.
     lines.push("");
     lines.push("Any edits already written are still on disk. To undo just those files:");
-    lines.push(bullet(`/external-agents:revert ${job.id}`));
+    lines.push(bullet(`/foreman:revert ${job.id}`));
   }
 
   return lines.join("\n");
@@ -388,7 +388,7 @@ export async function revert(jobID) {
     throw new Error(
       [
         `Job ${job.id} is still ${job.status}. Reverting under a running agent would be undone by its next write.`,
-        `Cancel it first:  /external-agents:cancel ${job.id}`
+        `Cancel it first:  /foreman:cancel ${job.id}`
       ].join("\n")
     );
   }

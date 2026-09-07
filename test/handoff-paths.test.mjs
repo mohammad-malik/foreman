@@ -57,7 +57,7 @@ test("a bare filename is not treated as a path", () => {
 });
 
 test("missing paths are separated from present ones", () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ea-paths-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-paths-"));
   fs.mkdirSync(path.join(root, "src"), { recursive: true });
   fs.writeFileSync(path.join(root, "src", "here.ts"), "", "utf8");
 
@@ -72,7 +72,7 @@ test("missing paths are separated from present ones", () => {
 test("a path escaping the workspace is not reported as missing", () => {
   // It is out of scope rather than absent, and reporting it as missing would
   // send someone looking for a file that was never meant to be there.
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "ea-paths-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-paths-"));
   const result = checkNamedPaths(root, "Compare against ../other/thing.ts please.");
 
   assert.deepEqual(result.missing, []);

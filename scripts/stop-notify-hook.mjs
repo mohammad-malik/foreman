@@ -15,7 +15,7 @@
  *
  * It never throws. A hook that fails on every turn would make the whole
  * session unpleasant for the sake of a status line, so any failure here exits
- * quietly. The information is available from `/external-agents:status` anyway.
+ * quietly. The information is available from `/foreman:status` anyway.
  *
  * It reads the JSON Claude Code writes to its stdin for the session id and
  * working directory, which is how a job is announced in the session that

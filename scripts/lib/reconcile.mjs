@@ -97,7 +97,7 @@ export async function reconcileWorkspace(workspace) {
               `codex started (pid ${job.pid}) but produced no output in ${Math.round(SILENT_GRACE_MS / 60000)} minutes, so it is stuck rather than working.`,
               killed.killed ? "The process was stopped." : `The process could not be stopped (${killed.reason}).`,
               "A working run emits its first event within seconds. This is what a `codex` on PATH that cannot be spawned detached looks like: a wrapper or shim rather than the real binary.",
-              "Check `codex --version` runs, and set EXTERNAL_AGENTS_CODEX_BIN to the real executable if PATH resolves to a shim."
+              "Check `codex --version` runs, and set FOREMAN_CODEX_BIN to the real executable if PATH resolves to a shim."
             ].join(" ")
           })
         );

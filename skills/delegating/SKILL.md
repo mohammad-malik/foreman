@@ -11,7 +11,7 @@ write the handoff, dispatch, wait, and report. You stay the orchestrator.
 `RUNTIME` below means:
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/external-agents.mjs"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/foreman.mjs"
 ```
 
 ## Never guess a model

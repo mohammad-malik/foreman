@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "ea-spoken-"));
-process.env.EXTERNAL_AGENTS_STATE_DIR = SCRATCH;
+const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-spoken-"));
+process.env.FOREMAN_STATE_DIR = SCRATCH;
 delete process.env.CLAUDE_PLUGIN_DATA;
 
 const { resolveSpoken, SpokenNameError, describeAvailable } = await import(

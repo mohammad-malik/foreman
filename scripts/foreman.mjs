@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The external-agents runtime.
+ * The foreman runtime.
  *
  * Every slash command in this plugin shells into exactly one place: here.
  * Claude reads job state by running the read-only subcommands through
@@ -23,7 +23,7 @@ import { notify } from "./lib/cmd/notify.mjs";
 import { resolve, waitForJobs } from "./lib/cmd/orchestrate.mjs";
 import { fail } from "./lib/render.mjs";
 
-const USAGE = `external-agents runtime
+const USAGE = `foreman runtime
 
 Read-only:
   doctor                        Check the runtime, OpenCode, routes and workspaces

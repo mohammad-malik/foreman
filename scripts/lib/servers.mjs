@@ -642,7 +642,7 @@ export async function acquireServer(workspace, { attempt = 0 } = {}) {
       }
 
       throw new OpencodeError(
-        `The OpenCode server for ${root} is not responding, and it still has active jobs so it was not replaced. Cancel them, or run: /external-agents:unregister ${root} --force`,
+        `The OpenCode server for ${root} is not responding, and it still has active jobs so it was not replaced. Cancel them, or run: /foreman:unregister ${root} --force`,
         { code: "server_unreachable_with_jobs" }
       );
     }

@@ -84,7 +84,7 @@ export function requireWorkspaceFor(rawPath, { requireExternal = false } = {}) {
       [
         `${target} is not inside any registered workspace.`,
         "Register it first:",
-        `  /external-agents:register ${target}`
+        `  /foreman:register ${target}`
       ].join("\n")
     );
   }
@@ -95,7 +95,7 @@ export function requireWorkspaceFor(rawPath, { requireExternal = false } = {}) {
         `Workspace ${workspace.root} is registered but external delegation is off.`,
         "Delegating sends your handoff and whatever the agent reads to OpenCode Zen, Moonshot and Fireworks.",
         "Turn it on for this repository only if that is acceptable:",
-        `  /external-agents:register ${workspace.root} --allow-external`
+        `  /foreman:register ${workspace.root} --allow-external`
       ].join("\n")
     );
   }

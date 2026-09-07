@@ -13,7 +13,7 @@ import {
 } from "../scripts/lib/git-baseline.mjs";
 
 function makeRepo() {
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "ea-git-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "foreman-git-")));
   const git = (...args) =>
     execFileSync("git", ["-C", root, ...args], { encoding: "utf8", windowsHide: true });
 
@@ -171,6 +171,6 @@ test("a path with spaces and unicode survives status parsing", () => {
 });
 
 test("capturing a baseline outside a repository fails loudly", () => {
-  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), "ea-norepo-"));
+  const notRepo = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-norepo-"));
   assert.throws(() => captureBaseline(notRepo), /not a git repository/);
 });

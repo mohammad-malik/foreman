@@ -154,9 +154,9 @@ export async function notify(context = {}) {
       const requests = current.result?.pendingPermissions ?? [];
       const first = requests[0];
       lines.push(
-        `external-agents: job ${current.id} (${current.qualified ?? current.alias}) is waiting for permission` +
+        `foreman: job ${current.id} (${current.qualified ?? current.alias}) is waiting for permission` +
           (first ? ` to ${oneLine(first.action ?? first.type ?? "act", 40)}` : "") +
-          `. Approve with /external-agents:permit allow, or reject it with /external-agents:permit reject`
+          `. Approve with /foreman:permit allow, or reject it with /foreman:permit reject`
       );
       // Deliberately not marked reported: it is still blocked, and it should
       // keep asking until someone answers.
@@ -175,7 +175,7 @@ export async function notify(context = {}) {
         : `${current.status}${current.error ? `: ${oneLine(current.error, 200).replace(/\.$/, "")}` : ""}`;
 
     lines.push(
-      `external-agents: job ${current.id} (${current.qualified ?? current.alias}) ${summary}. See it with /external-agents:result ${current.id}`
+      `foreman: job ${current.id} (${current.qualified ?? current.alias}) ${summary}. See it with /foreman:result ${current.id}`
     );
     markReported(current);
   }

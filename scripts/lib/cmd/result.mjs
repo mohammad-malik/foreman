@@ -364,8 +364,8 @@ export function renderResult(job) {
       }
     }
     lines.push("");
-    lines.push(`Approve with:  /external-agents:permit allow`);
-    lines.push(`Or reject it:  /external-agents:permit reject`);
+    lines.push(`Approve with:  /foreman:permit allow`);
+    lines.push(`Or reject it:  /foreman:permit reject`);
   }
 
   for (const warning of job.result?.warnings ?? []) {

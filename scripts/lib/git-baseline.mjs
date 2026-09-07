@@ -422,7 +422,7 @@ function writeSnapshot(absolute, replacement, { resolveLegacyMode = () => null }
   // directory so the rename is still atomic.
   const tmp = path.join(
     path.dirname(absolute),
-    `.ea-restore-${randomBytes(8).toString("hex")}.tmp`
+    `.foreman-restore-${randomBytes(8).toString("hex")}.tmp`
   );
 
   try {

@@ -26,7 +26,7 @@ export class CodexError extends Error {
 }
 
 export function codexBinary() {
-  return process.env.EXTERNAL_AGENTS_CODEX_BIN || "codex";
+  return process.env.FOREMAN_CODEX_BIN || "codex";
 }
 
 export function codexHome() {
@@ -54,7 +54,7 @@ export function detectCodexVersion() {
     if (error.code === "ENOENT") {
       throw new CodexError(`Codex executable "${codexBinary()}" was not found on PATH.`, {
         code: "codex_missing",
-        hint: "Install the Codex CLI, or set EXTERNAL_AGENTS_CODEX_BIN to its full path."
+        hint: "Install the Codex CLI, or set FOREMAN_CODEX_BIN to its full path."
       });
     }
     throw new CodexError(`Could not run "${codexBinary()} --version": ${error.message}`, {

@@ -1,4 +1,4 @@
-# external-agents
+# foreman
 
 Hand a coding task to a non-Claude model through OpenCode, then verify what it actually did.
 
@@ -7,15 +7,15 @@ Claude stays the orchestrator: it writes the handoff, an external model (Kimi, G
 ## Setup
 
 ```
-claude plugin marketplace add C:\Users\MohammadMalik\Documents\Codex\external-agents
-claude plugin install external-agents@local -s user
+claude plugin marketplace add C:\Users\MohammadMalik\Documents\Codex\foreman
+claude plugin install foreman@local -s user
 ```
 
 Then, in a repository you want to use it in:
 
 ```
-/external-agents:setup
-/external-agents:register . --allow-external
+/foreman:setup
+/foreman:register . --allow-external
 ```
 
 `--allow-external` is a separate decision on purpose. Without it the repository is registered but delegation is refused, because delegating sends your handoff and whatever the agent reads to OpenCode Zen, Moonshot and Fireworks.
@@ -23,10 +23,10 @@ Then, in a repository you want to use it in:
 ## Using it
 
 ```
-/external-agents:delegate --model kimi --role builder --write add a --dry-run flag to the sync command
-/external-agents:status
-/external-agents:result
-/external-agents:revert <job-id>
+/foreman:delegate --model kimi --role builder --write add a --dry-run flag to the sync command
+/foreman:status
+/foreman:result
+/foreman:revert <job-id>
 ```
 
 Long jobs take `--background` and are reported when they land.
@@ -130,9 +130,9 @@ Bump the version, then:
 
 ```
 claude plugin marketplace update local
-claude plugin update external-agents@local
+claude plugin update foreman@local
 ```
 
 For day-to-day iteration, skip installing entirely and run
-`claude --plugin-dir C:\Users\MohammadMalik\Documents\Codex\external-agents`,
+`claude --plugin-dir C:\Users\MohammadMalik\Documents\Codex\foreman`,
 which loads the source directly.

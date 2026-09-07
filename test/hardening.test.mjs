@@ -10,8 +10,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "ea-hardening-"));
-process.env.EXTERNAL_AGENTS_STATE_DIR = SCRATCH;
+const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-hardening-"));
+process.env.FOREMAN_STATE_DIR = SCRATCH;
 delete process.env.CLAUDE_PLUGIN_DATA;
 delete process.env.CLAUDE_CODE_SESSION_ID;
 delete process.env.CLAUDE_SESSION_ID;

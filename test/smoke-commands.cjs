@@ -23,7 +23,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const RUNTIME = path.join(__dirname, "..", "scripts", "external-agents.mjs");
+const RUNTIME = path.join(__dirname, "..", "scripts", "foreman.mjs");
 const COMMANDS = [
   "doctor",
   "routes",
@@ -54,12 +54,12 @@ function isExpected(output) {
   return EXPECTED.some((phrase) => output.includes(phrase));
 }
 
-const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "ea-smoke-"));
+const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-smoke-"));
 const env = {
   ...process.env,
   // Highest-precedence source in resolveStateRoot, so the children cannot
   // reach the developer's real jobs, servers or workspace allowlist.
-  EXTERNAL_AGENTS_STATE_DIR: stateDir
+  FOREMAN_STATE_DIR: stateDir
 };
 // A stray value exported by another plugin's hook would otherwise be consulted.
 delete env.CLAUDE_PLUGIN_DATA;

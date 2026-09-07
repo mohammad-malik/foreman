@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "ea-servers-"));
-process.env.EXTERNAL_AGENTS_STATE_DIR = SCRATCH;
+const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-servers-"));
+process.env.FOREMAN_STATE_DIR = SCRATCH;
 delete process.env.CLAUDE_PLUGIN_DATA;
 
 const { AUTH_USERNAME, authHeader, serverStatus, sweep, IDLE_TTL_MS } = await import(

@@ -92,7 +92,7 @@ function wqlLike(value) {
  * in its command line, so this finds the process rather than orphaning it.
  *
  * Our own runtime is excluded by name as well as by pid. A concurrent
- * `external-agents.mjs status <job id>` in another session carries the same
+ * `foreman.mjs status <job id>` in another session carries the same
  * marker on its command line, and adopting that as the job's codex process
  * would track the wrong thing.
  */
@@ -110,7 +110,7 @@ export function findPidsByCommandLine(marker) {
         "-Command",
         // The querying process's own command line contains the marker, so it
         // has to exclude itself or it always finds a match.
-        `(Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%${wqlLike(marker)}%' AND NOT CommandLine LIKE '%external-agents.mjs%'" | Where-Object { $_.ProcessId -ne $PID }).ProcessId`
+        `(Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%${wqlLike(marker)}%' AND NOT CommandLine LIKE '%foreman.mjs%'" | Where-Object { $_.ProcessId -ne $PID }).ProcessId`
       ],
       { encoding: "utf8", timeout: 15_000, windowsHide: true }
     );

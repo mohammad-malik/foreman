@@ -14,7 +14,7 @@ import os from "node:os";
 import path from "node:path";
 
 export const CONFIG_VERSION = 1;
-const PLUGIN_DIR_NAME = "external-agents";
+const PLUGIN_DIR_NAME = "foreman";
 
 /**
  * `CLAUDE_PLUGIN_DATA` cannot be trusted on sight.
@@ -45,13 +45,13 @@ function claudePluginDataIfOurs() {
 
 /** @returns {{root: string, source: string, rejectedPluginData: string|null}} */
 export function resolveStateRoot() {
-  const explicit = process.env.EXTERNAL_AGENTS_STATE_DIR;
+  const explicit = process.env.FOREMAN_STATE_DIR;
   const { value: fromClaude, rejected } = claudePluginDataIfOurs();
 
   if (explicit && explicit.trim() !== "") {
     return {
       root: path.resolve(explicit),
-      source: "EXTERNAL_AGENTS_STATE_DIR",
+      source: "FOREMAN_STATE_DIR",
       rejectedPluginData: rejected
     };
   }

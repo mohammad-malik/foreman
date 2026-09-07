@@ -17,11 +17,11 @@ test("a Windows path survives with its backslashes intact", () => {
   // The real failure: `register C:\Users\MohammadMalik\Documents\Codex\x`
   // arrived as `UsersMohammadMalikDocumentsCodexx` and resolved against cwd.
   const argv = tokenize(
-    String.raw`C:\Users\MohammadMalik\Documents\Codex\external-agents --allow-external`
+    String.raw`C:\Users\MohammadMalik\Documents\Codex\foreman --allow-external`
   );
 
   assert.deepEqual(argv, [
-    String.raw`C:\Users\MohammadMalik\Documents\Codex\external-agents`,
+    String.raw`C:\Users\MohammadMalik\Documents\Codex\foreman`,
     "--allow-external"
   ]);
 });

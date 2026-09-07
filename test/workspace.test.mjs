@@ -23,7 +23,7 @@ test("canonicalize returns an absolute path", () => {
 });
 
 test("canonicalize resolves a path whose leaf does not exist yet", () => {
-  const root = tempDir("ea-canon-");
+  const root = tempDir("foreman-canon-");
   const missing = path.join(root, "not-created-yet", "deeper");
 
   const result = canonicalize(missing);
@@ -44,12 +44,12 @@ test("containmentKey strips trailing separators", () => {
 });
 
 test("a directory contains itself", () => {
-  const root = tempDir("ea-self-");
+  const root = tempDir("foreman-self-");
   assert.equal(isInside(root, root), true);
 });
 
 test("a child directory is inside its parent", () => {
-  const root = tempDir("ea-child-");
+  const root = tempDir("foreman-child-");
   const child = path.join(root, "src", "lib");
   fs.mkdirSync(child, { recursive: true });
 
@@ -59,7 +59,7 @@ test("a child directory is inside its parent", () => {
 test("a sibling with a shared name prefix is NOT inside", () => {
   // The bug a naive startsWith check would introduce: C:\repo-evil passing as
   // a child of C:\repo. This is the whole reason for the separator boundary.
-  const base = tempDir("ea-prefix-");
+  const base = tempDir("foreman-prefix-");
   const root = path.join(base, "repo");
   const evil = path.join(base, "repo-evil");
   fs.mkdirSync(root);
@@ -69,7 +69,7 @@ test("a sibling with a shared name prefix is NOT inside", () => {
 });
 
 test("a parent is not inside its own child", () => {
-  const root = tempDir("ea-parent-");
+  const root = tempDir("foreman-parent-");
   const child = path.join(root, "nested");
   fs.mkdirSync(child);
 
@@ -77,7 +77,7 @@ test("a parent is not inside its own child", () => {
 });
 
 test("relative traversal cannot escape the root", () => {
-  const base = tempDir("ea-traverse-");
+  const base = tempDir("foreman-traverse-");
   const root = path.join(base, "repo");
   const outside = path.join(base, "secrets");
   fs.mkdirSync(root);
@@ -89,7 +89,7 @@ test("relative traversal cannot escape the root", () => {
 });
 
 test("case differences do not defeat containment on Windows", { skip: !IS_WINDOWS }, () => {
-  const root = tempDir("ea-case-");
+  const root = tempDir("foreman-case-");
   const child = path.join(root, "Src");
   fs.mkdirSync(child);
 
@@ -97,7 +97,7 @@ test("case differences do not defeat containment on Windows", { skip: !IS_WINDOW
 });
 
 test("a junction target is resolved to its real location", { skip: !IS_WINDOWS }, () => {
-  const base = tempDir("ea-junction-");
+  const base = tempDir("foreman-junction-");
   const real = path.join(base, "real");
   const other = path.join(base, "other");
   fs.mkdirSync(real);
@@ -117,7 +117,7 @@ test("a junction target is resolved to its real location", { skip: !IS_WINDOWS }
 });
 
 test("workspaceSlug is stable and collision resistant", () => {
-  const base = tempDir("ea-slug-");
+  const base = tempDir("foreman-slug-");
   const first = path.join(base, "a", "api");
   const second = path.join(base, "b", "api");
   fs.mkdirSync(first, { recursive: true });
