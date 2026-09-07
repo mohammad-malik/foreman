@@ -16,8 +16,21 @@ import {
   registerWorkspace,
   unregisterWorkspace
 } from "../registry.mjs";
+import { configFile } from "../state.mjs";
 import { canonicalize, containmentKey, findGitRoot } from "../workspace.mjs";
 import { bullet, heading, keyValue } from "../render.mjs";
+
+/**
+ * The allowlist entry for exactly this path, re-read from disk.
+ *
+ * Exact rather than by containment: a parent's entry is not evidence that the
+ * child was written, and treating it as such is how a failed write would be
+ * reported as a success.
+ */
+function storedEntry(root) {
+  const key = containmentKey(root);
+  return listWorkspaces().find((entry) => containmentKey(entry.root) === key) ?? null;
+}
 
 export function register(rawPath, { allowExternal = false, force = false } = {}) {
   if (!rawPath) {
@@ -53,10 +66,42 @@ export function register(rawPath, { allowExternal = false, force = false } = {})
 
   const entry = registerWorkspace(target, { allowExternal });
 
+  // Read the allowlist back off disk before claiming anything about it.
+  //
+  // This command has printed "external delegation ALLOWED" while the stored
+  // entry stayed local-only, and the delegate that followed refused for a
+  // reason that contradicted what the user had just been told. The write is
+  // atomic and normally this process is the only writer, so a disagreement
+  // means something real: a second runtime pointed at a different state
+  // directory, a concurrent registration, or a config replaced underneath us.
+  // Whichever it is, naming it beats a success message the allowlist does not
+  // back up.
+  const stored = storedEntry(target);
+
+  if (!stored) {
+    throw new Error(
+      [
+        `Registered ${entry.root}, but reading the allowlist back does not find it.`,
+        `Allowlist: ${configFile()}`,
+        "Nothing here is registered. Check whether another process is rewriting that file, then try again."
+      ].join("\n")
+    );
+  }
+
+  if (stored.allowExternal !== entry.allowExternal) {
+    throw new Error(
+      [
+        `Registered ${entry.root}, but the stored external-delegation flag reads ${stored.allowExternal} rather than ${entry.allowExternal}.`,
+        `Allowlist: ${configFile()}`,
+        "Treat this workspace as NOT cleared to send content off the machine until those two agree."
+      ].join("\n")
+    );
+  }
+
   lines.unshift(`Registered ${entry.root}`);
   lines.push(
     bullet(
-      entry.allowExternal
+      stored.allowExternal
         ? "external delegation ALLOWED: handoffs and repository content may be sent to OpenCode Zen, Moonshot and Fireworks"
         : "local only: delegation is refused here until you re-register with --allow-external"
     )
@@ -164,6 +209,10 @@ export function workspaces() {
         entry.root,
         entry.allowExternal ? "delegation allowed" : "local only"
       ])
-    )
+    ),
+    "",
+    // Named so that a registration which "did not stick" can be traced to two
+    // runtimes reading different files rather than to a lost write.
+    `Allowlist: ${configFile()}`
   ].join("\n");
 }

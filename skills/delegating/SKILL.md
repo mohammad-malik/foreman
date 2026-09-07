@@ -72,14 +72,26 @@ task the user described, write a handoff that stands alone:
 - decisions already settled here, so it does not relitigate them
 - the exact paths and symbols to start from
 - constraints: what to leave alone, conventions to match, what not to install
-- the commands that prove the work is done
+- how the work will be proven done, in terms the agent can actually reach
 - what a finished answer looks like
 
 Do not paste the conversation. Do not send a one-line restatement of the
 request. If you would not accept the handoff as a subagent, it is not ready.
 
-Write each handoff to a file and pass it with `--task "$(cat <file>)"`. A long
-handoff on the command line is where quoting goes wrong.
+**Do not ask an OpenCode researcher to run commands.** Its bash is denied
+outright, so "run these and include their raw output" asks for something that
+cannot happen, and the job comes back missing the one section you called the
+proof. Ask instead for what the files show: quoted lines, paths, symbols. Run
+the commands yourself when it lands. The dispatch refuses this now, but the
+refusal costs a round trip you can skip by writing it correctly. A Codex
+researcher is the exception and may be asked to run read-only commands.
+
+Write each handoff to a file and pass it with `--task-file <file>`. Never paste
+a handoff onto the command line: quoting goes wrong, and in auto mode the
+permission classifier sees thousands of characters of untrusted text where it
+expects a command and blocks the dispatch. `--task-file` keeps the command line
+short and identically shaped every time, which is what lets the user allow it
+once.
 
 **Check the paths you name exist** before dispatching. A handoff citing a file
 that is not there costs fifteen minutes and real money.
@@ -87,8 +99,13 @@ that is not there costs fifteen minutes and real money.
 ## Dispatch
 
 ```
-RUNTIME delegate --dir "<repo>" --model <alias> --route <route> --role <role> [--write] --background --task "$(cat <handoff>)"
+RUNTIME delegate --dir "<repo>" --model <alias> --route <route> --role <role> [--write] --background --task-file "<handoff>"
 ```
+
+If that call is blocked by the permission classifier, do not retype it as a
+slash command: `/foreman:delegate` carries `disable-model-invocation`, so you
+cannot run it either. Show the user the command above and the one-line rule
+that allows it, from the README's auto-mode section, and let them decide.
 
 - `--role researcher` reads and reports; `--role builder` edits. Never add
   `--write` unless the user asked for changes.

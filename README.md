@@ -31,6 +31,28 @@ Then, in a repository you want to use it in:
 
 Long jobs take `--background` and are reported when they land.
 
+### Letting Claude dispatch in auto mode
+
+`/foreman:delegate` is human-invoked, so Claude cannot run it. In auto mode Claude falls back to calling the runtime through Bash, and a handoff pasted onto that command line is thousands of characters of untrusted text sitting where the permission classifier expects a command. It gets blocked, and the dispatch lands back on you.
+
+Pass the handoff as a file instead. The command line stays short and the same shape every time:
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/scripts/foreman.mjs" delegate --dir <repo> --model kimi --role builder --write --background --task-file <path>
+```
+
+To allow that once, add a rule to `.claude/settings.json` in the repository, or to `~/.claude/settings.json` for all of them:
+
+```json
+{
+  "permissions": {
+    "allow": ["Bash(node *foreman*/scripts/foreman.mjs delegate*)"]
+  }
+}
+```
+
+That allows dispatch, not node in general, and it removes no gate: the workspace still has to be registered, `--allow-external` still has to be on, and `--write` still needs a clean tree and a git baseline.
+
 ## Models
 
 | Alias | Say | Backend | Routes |

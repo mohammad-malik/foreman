@@ -105,3 +105,45 @@ test("a non-breaking space is treated as whitespace by both halves", () => {
   assert.deepEqual(tokenize(`job_abc${nbsp}`), ["job_abc"]);
   assert.deepEqual(normalizeArgv([`job_abc${nbsp}`]), ["job_abc"]);
 });
+
+test("a flag before the path is a flag, not part of the path", () => {
+  // `/foreman:register --allow-external C:\repo` used to report that
+  // `C:\repo\--allow-external C:\repo` does not exist, because flags were only
+  // stripped from the end. Argument order is not worth failing a registration
+  // over.
+  const { path, flags } = extractPath("--allow-external C:\repo", ["allow-external", "force"]);
+
+  assert.equal(path, "C:\repo");
+  assert.deepEqual([...flags], ["allow-external"]);
+});
+
+test("flags on both ends of the path", () => {
+  const { path, flags } = extractPath("--force C:\repo --allow-external", [
+    "allow-external",
+    "force"
+  ]);
+
+  assert.equal(path, "C:\repo");
+  assert.deepEqual([...flags].sort(), ["allow-external", "force"]);
+});
+
+test("a path that merely starts like a flag is still a path", () => {
+  const { path, flags } = extractPath("--forced\repo", ["force"]);
+
+  assert.equal(path, "--forced\repo");
+  assert.deepEqual([...flags], []);
+});
+
+test("an unrecognised leading flag stays with the path", () => {
+  // Same reading as the trailing case: unknown means "not mine to remove",
+  // and swallowing it silently is how a typo becomes a wrong directory.
+  const { path, flags } = extractPath("--allow-externl C:\repo", ["allow-external"]);
+
+  assert.equal(path, "--allow-externl C:\repo");
+  assert.deepEqual([...flags], []);
+});
+
+test("leading flags do not disturb a path with awkward spacing", () => {
+  const { path } = extractPath("--allow-external C:\My  Projects\repo", ["allow-external"]);
+  assert.equal(path, "C:\My  Projects\repo");
+});

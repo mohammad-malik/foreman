@@ -18,6 +18,7 @@ import { judgeCodexJob, readCodexJob, startCodexJob } from "../codex-job.mjs";
 import { resolveRoute } from "../routes.mjs";
 import { OpencodeApi } from "../opencode-api.mjs";
 import { captureBaseline, describeDirty, isGitRepository } from "../git-baseline.mjs";
+import { commandInstructions } from "../handoff-commands.mjs";
 import { checkNamedPaths } from "../handoff-paths.mjs";
 import {
   activeJobs,
@@ -169,6 +170,27 @@ export async function delegate({
         "A read-only agent cannot create them, so it would spend the job looking for files that are not there. Fix the paths, or use --role builder --write if they are meant to be created."
       ].join(String.fromCharCode(10))
     );
+  }
+
+  // The researcher's shell is denied, so a handoff that asks it to run
+  // commands is asking for something that cannot happen. Left alone, the job
+  // still returns a useful report, but the part the caller nominated as proof
+  // is missing, and that only surfaces on reading the reply.
+  // OpenCode only: a Codex researcher runs in a read-only sandbox, where
+  // commands are allowed and `git log` is a reasonable thing to ask for.
+  if (agent === "external-researcher" && resolved.backend === "opencode") {
+    const asks = commandInstructions(task);
+    if (asks.length > 0) {
+      throw new Error(
+        [
+          "The handoff asks a read-only agent to run commands. Its shell is denied outright, so these would not run:",
+          ...asks.map((entry) => `  ${entry}`),
+          "",
+          "Ask for what the files show instead: quoted lines, paths and symbols it can reach with read, glob and grep. Run the commands yourself afterwards.",
+          "If the agent genuinely needs a shell: on OpenCode that means --role builder --write, since a builder without --write is downgraded to this same read-only agent. To keep it read-only, run it on the codex backend instead, whose read-only sandbox still allows commands."
+        ].join(String.fromCharCode(10))
+      );
+    }
   }
 
   let baseline = null;

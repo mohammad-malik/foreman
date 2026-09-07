@@ -152,9 +152,15 @@ export function normalizeArgv(argv) {
  * difference between registering `C:\My  Projects\repo` and registering some
  * other directory that happens to exist.
  *
- * Flags are only honoured at the end. A trailing `--force` on a directory
- * genuinely named `app --force` is ambiguous no matter what, and resolving it
- * toward "flag" is the reading a person almost always means.
+ * Flags are honoured at either end, never in the middle. A trailing `--force`
+ * on a directory genuinely named `app --force` is ambiguous no matter what,
+ * and resolving it toward "flag" is the reading a person almost always means.
+ * A leading flag is not ambiguous at all, because no path begins with `--`.
+ *
+ * The leading form used to be swallowed into the path, so
+ * `register --allow-external C:\repo` complained that
+ * `C:\repo\--allow-external C:\repo` does not exist. Flag order is not
+ * something to fail a registration over.
  */
 export function extractPath(raw, knownFlags = [], argv = null) {
   const flags = new Set(knownFlags.map((flag) => (flag.startsWith("--") ? flag : `--${flag}`)));
@@ -193,6 +199,22 @@ export function extractPath(raw, knownFlags = [], argv = null) {
 
     found.add(match[2].slice(2));
     rest = trimmed.slice(0, trimmed.length - match[2].length);
+  }
+
+  // Now the same from the front. A leading flag must be followed by
+  // whitespace or be the whole string, so `--forced-migrations\repo` stays a
+  // path rather than being read as `--force` plus rubbish.
+  for (;;) {
+    const trimmed = rest.replace(/^\s+/u, "");
+    const match = trimmed.match(/^(--[A-Za-z0-9][A-Za-z0-9-]*)(\s|$)/u);
+
+    if (!match || !flags.has(match[1])) {
+      rest = trimmed;
+      break;
+    }
+
+    found.add(match[1].slice(2));
+    rest = trimmed.slice(match[1].length);
   }
 
   // A quoted path is unquoted; an unquoted one is taken verbatim.
@@ -322,14 +344,14 @@ export function extractOption(argv, raw, name, knownFlags = []) {
       break;
     }
 
-    if (token === marker) {
+    // Both spellings consume the same run of tokens. `--task-file=C:\My
+    // Tasks\h.md` used to drop only the first token, leaving `Tasks\h.md` in
+    // positionals, where delegate read it as a second, inline task and refused
+    // a command line that had named exactly one.
+    if (token === marker || optionName(token) === marker) {
       while (i + 1 < argv.length && argv[i + 1] !== "--" && !known.has(optionName(argv[i + 1]))) {
         i += 1;
       }
-      continue;
-    }
-
-    if (optionName(token) === marker) {
       continue;
     }
 

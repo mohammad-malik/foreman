@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { extractOption } from "../scripts/lib/tokenize.mjs";
+import { extractOption, tokenize } from "../scripts/lib/tokenize.mjs";
 
 /**
  * `--dir` reads its value from the raw argument string rather than from parsed
@@ -121,4 +121,14 @@ test("a --dir inside a quoted task is prose, not the option", () => {
     dirIn(String.raw`--task "explain what --dir does" --dir C:\repo`),
     String.raw`C:\repo`
   );
+});
+
+test("the equals form consumes its whole path", () => {
+  // `--dir=C:\My Tasks\repo` used to drop only the first token and leave
+  // `Tasks\repo` in positionals, where delegate read it as a second task.
+  const raw = "--dir=C:\My Tasks\repo --model kimi";
+  const { value, rest } = extractOption(tokenize(raw), raw, "dir", ["dir", "model"]);
+
+  assert.equal(value, "C:\My Tasks\repo");
+  assert.deepEqual(rest, ["--model", "kimi"]);
 });

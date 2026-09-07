@@ -1,6 +1,6 @@
 ---
 description: Hand a task to an external model (Kimi, GLM) through OpenCode, then verify the result against git
-argument-hint: '[--model kimi|glm|sol|luna] [--backend codex|opencode] [--route standard|fast] [--role builder|researcher] [--write] [--background] what the external agent should do'
+argument-hint: '[--task-file <path>] [--model kimi|glm|sol|luna] [--backend codex|opencode] [--route standard|fast] [--role builder|researcher] [--write] [--background] what the external agent should do'
 disable-model-invocation: true
 allowed-tools: Read, Glob, Grep, Bash(node:*), Bash(git:*), AskUserQuestion
 ---
@@ -11,7 +11,7 @@ Raw arguments: `$ARGUMENTS`
 
 ## Write the handoff yourself
 
-The external agent cannot see this conversation. It gets one message and nothing else, so `--task` must stand on its own exactly the way a prompt to a native subagent would. Include:
+The external agent cannot see this conversation. It gets one message and nothing else, so the handoff must stand on its own exactly the way a prompt to a native subagent would. Include:
 
 - the objective, stated as an outcome rather than a topic
 - decisions already made here, so it does not relitigate them
@@ -25,7 +25,7 @@ Do not paste the conversation. Do not send a one-line restatement of the user's 
 ## Run it
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/scripts/foreman.mjs" delegate --dir "<repo>" --model <alias> --route <route> --role <role> [--write] [--background] --task "<the handoff>"
+node "${CLAUDE_PLUGIN_ROOT}/scripts/foreman.mjs" delegate --dir "<repo>" --model <alias> --route <route> --role <role> [--write] [--background] --task-file "<path to the handoff>"
 ```
 
 Rules that are not yours to override:

@@ -71,6 +71,19 @@ export function findWorkspaceFor(rawPath) {
 }
 
 /**
+ * The same fix written as a runtime call.
+ *
+ * A refusal is usually read by an agent, not a person, and an agent cannot run
+ * a slash command: those carry `disable-model-invocation`, which is the whole
+ * point of routing dispatch through them. Naming only the slash command left
+ * agents retrying something that can never work. Both forms appear, so
+ * whichever is reading knows what it can actually run.
+ */
+function runtimeForm(tail) {
+  return ["", "Or, as a command:", `  node "\${CLAUDE_PLUGIN_ROOT}/scripts/foreman.mjs" ${tail}`];
+}
+
+/**
  * Resolve a path to the workspace that may act on it, or throw with the exact
  * command needed to fix the problem. `requireExternal` is set by anything that
  * would send repository content off the machine.
@@ -83,8 +96,9 @@ export function requireWorkspaceFor(rawPath, { requireExternal = false } = {}) {
     throw new Error(
       [
         `${target} is not inside any registered workspace.`,
-        "Register it first:",
-        `  /foreman:register ${target}`
+        "Register it first, in this session or a terminal:",
+        `  /foreman:register ${target}`,
+        ...runtimeForm(`register "${target}"`)
       ].join("\n")
     );
   }
@@ -95,7 +109,8 @@ export function requireWorkspaceFor(rawPath, { requireExternal = false } = {}) {
         `Workspace ${workspace.root} is registered but external delegation is off.`,
         "Delegating sends your handoff and whatever the agent reads to OpenCode Zen, Moonshot and Fireworks.",
         "Turn it on for this repository only if that is acceptable:",
-        `  /foreman:register ${workspace.root} --allow-external`
+        `  /foreman:register ${workspace.root} --allow-external`,
+        ...runtimeForm(`register "${workspace.root}" --allow-external`)
       ].join("\n")
     );
   }

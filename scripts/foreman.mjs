@@ -9,6 +9,7 @@
  * person asked for, which is why there is no MCP server.
  */
 
+import fs from "node:fs";
 import process from "node:process";
 
 import { parseArgs } from "./lib/args.mjs";
@@ -39,7 +40,8 @@ Read-only:
   result [job-id]               Collect and show a job's outcome
 
 Human-invoked:
-  delegate --task <text> [--model kimi] [--route standard|fast]
+  delegate --task <text> | --task-file <path>
+           [--model kimi] [--route standard|fast]
            [--backend codex|opencode]
            [--role builder|fixer|researcher] [--write]
            [--background] [--timeout <seconds>] [--allow-dirty-tree]
@@ -63,7 +65,17 @@ Maintenance:
 `;
 
 const DELEGATE_SPEC = {
-  valueOptions: ["task", "model", "route", "backend", "role", "timeout", "dir", "budget"],
+  valueOptions: [
+    "task",
+    "task-file",
+    "model",
+    "route",
+    "backend",
+    "role",
+    "timeout",
+    "dir",
+    "budget"
+  ],
   boolOptions: ["write", "background", "wait", "allow-dirty-tree", "unattended"]
 };
 
@@ -71,6 +83,91 @@ const DELEGATE_SPEC = {
 // the raw argument string and needs to know where that value ends: at the
 // next recognised option, because the slash command puts --dir first.
 const DELEGATE_OPTIONS = [...DELEGATE_SPEC.valueOptions, ...DELEGATE_SPEC.boolOptions];
+
+/**
+ * Read a handoff from a file, or refuse with the reason.
+ *
+ * Deliberately strict about an empty file: a truncated or not-yet-written
+ * handoff would otherwise dispatch a paid job with no instructions, and the
+ * agent would improvise something nobody asked for.
+ */
+function readTaskFile(file) {
+  let raw;
+  try {
+    raw = fs.readFileSync(file);
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      throw new Error(`--task-file ${file} does not exist.`);
+    }
+    if (error.code === "EISDIR") {
+      throw new Error(`--task-file ${file} is a directory, not a file.`);
+    }
+    throw new Error(`Could not read --task-file ${file}: ${error.message}`);
+  }
+
+  // Decode by byte-order mark rather than assuming UTF-8.
+  //
+  // Windows PowerShell 5.1 writes UTF-16LE from `>` and `Out-File`, which is
+  // exactly how the README tells people to produce a handoff. Read as UTF-8
+  // that becomes replacement characters and embedded NULs, and it passes a
+  // nonempty check, so a corrupted handoff would be dispatched and paid for.
+  const badEncoding = () =>
+    new Error(
+      [
+        `--task-file ${file} is not valid UTF-8 or UTF-16, so the handoff would arrive corrupted.`,
+        "Write it as UTF-8: in PowerShell, Set-Content -Encoding utf8 (or Out-File -Encoding utf8)."
+      ].join("\n")
+    );
+
+  // Strict on this branch too. `Buffer.toString("utf16le")` drops a trailing
+  // odd byte without complaint, so a truncated file decoded into a shorter
+  // handoff that looked fine and was dispatched.
+  const decodeUtf16 = (bytes) => {
+    if (bytes.length % 2 !== 0) {
+      throw badEncoding();
+    }
+    try {
+      return new TextDecoder("utf-16le", { fatal: true }).decode(bytes);
+    } catch {
+      throw badEncoding();
+    }
+  };
+
+  let text;
+  if (raw[0] === 0xff && raw[1] === 0xfe) {
+    text = decodeUtf16(raw.subarray(2));
+  } else if (raw[0] === 0xfe && raw[1] === 0xff) {
+    // Node has no utf16be decoder; swapping the pairs makes it one.
+    text = decodeUtf16(Buffer.from(raw.subarray(2)).swap16());
+  } else {
+    // Strict, so malformed bytes are a decoding failure rather than a string
+    // full of replacement characters. A handoff may legitimately contain a
+    // literal U+FFFD, for instance when quoting corrupted output, and
+    // rejecting on the character rather than the bytes refused that file with
+    // advice that could not fix it.
+    try {
+      text = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+    } catch {
+      throw badEncoding();
+    }
+    // A UTF-8 BOM decodes to one character, so it is stripped as text.
+    text = text.replace(/^﻿/u, "");
+  }
+
+  // UTF-16 with no BOM decodes as UTF-8 into NULs. Nothing legitimate carries
+  // a NUL, so this is the one case the bytes alone cannot distinguish.
+  if (text.includes("\u0000")) {
+    throw badEncoding();
+  }
+
+  const task = text.trim();
+
+  if (task === "") {
+    throw new Error(`--task-file ${file} is empty. Nothing was dispatched.`);
+  }
+
+  return task;
+}
 
 const COMMANDS = {
   doctor: () => {
@@ -135,7 +232,20 @@ const COMMANDS = {
     // parseArgs stops an option value at its first space, so an unquoted
     // `--dir C:\Program Files\repo` would arrive as `C:\Program` with
     // `Files\repo` stranded in positionals and silently dropped.
-    const { value: dir, rest: args } = extractOption(argv, raw, "dir", DELEGATE_OPTIONS);
+    const { value: dir, rest: afterDir } = extractOption(argv, raw, "dir", DELEGATE_OPTIONS);
+
+    // --task-file is a path and gets the same treatment for the same reason:
+    // extracted from the raw string, and its tokens removed before parseArgs
+    // runs. Reading the value but leaving the tokens behind left the tail of
+    // `--task-file C:\My Tasks\handoff.md` sitting in positionals, which then
+    // tripped the "both a file and an inline task" refusal on a command line
+    // that had only ever named one.
+    const { value: taskFile, rest: args } = extractOption(
+      afterDir,
+      raw,
+      "task-file",
+      DELEGATE_OPTIONS
+    );
     const { options, positionals } = parseArgs(args, DELEGATE_SPEC);
 
     // The task can come from --task or from whatever is left over, so a long
@@ -150,7 +260,26 @@ const COMMANDS = {
       );
     }
 
-    const task = options.task ?? positionals.join(" ");
+    // --task-file keeps the handoff off the command line altogether.
+    //
+    // A handoff is long, and it quotes file contents, error text and paths.
+    // Passing it inline means every one of those characters has to survive a
+    // shell, and it means a permission classifier reading the command line
+    // sees thousands of characters of untrusted text where it expects a
+    // command. Both problems disappear when the text is read from a file: the
+    // command line becomes a short, fixed shape a person can allow once.
+    const handoffFile = taskFile ?? options["task-file"];
+
+    if (handoffFile !== undefined && (options.task !== undefined || positionals.length > 0)) {
+      throw new Error(
+        "--task-file and an inline task were both given. Use one: the file, or --task."
+      );
+    }
+
+    const task =
+      handoffFile === undefined
+        ? options.task ?? positionals.join(" ")
+        : readTaskFile(handoffFile);
 
     process.stdout.write(
       `${await delegate({
