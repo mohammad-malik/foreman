@@ -9,8 +9,8 @@ allowed-tools: Bash(node:*)
 
 Read the report and tell the user what to do next, shortest path first. Common cases:
 
-- No workspaces registered: give them the `/foreman:register <path>` line for the repo they are in.
-- A workspace registered but delegation off: explain that delegating sends repository content to OpenCode Zen, Moonshot and Fireworks, and give them the `--allow-external` line. Let them decide.
+- Nothing approved yet: that is fine, and no setup is needed. Any git repository works; the first delegation from one will ask.
+- Asked about a repository they want to delegate from: explain that delegating sends repository content to OpenCode Zen, Moonshot and Fireworks, and give them the `/foreman:allow <path>` line. Let them decide.
 - A route unavailable: the report names the closest live model IDs. Do not silently pick a different model.
 
 Never print or ask for API keys.

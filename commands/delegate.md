@@ -33,7 +33,7 @@ Rules that are not yours to override:
 - `--write` only when the user asked for edits. Never add it to be helpful.
 - Use the model the user named. If they named none, ask rather than guessing.
 - `--background` for anything expected to run long; you will be told when it lands.
-- If the command reports the workspace is unregistered or delegation is off, show the user the exact `register` command and stop. Do not register on their behalf.
+- If the command reports the repository has not been approved for external delegation, show the user the exact `/foreman:allow` line and stop. Do not approve on their behalf: that decision sends their source off the machine.
 
 ## Afterwards
 

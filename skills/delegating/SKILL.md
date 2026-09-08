@@ -120,9 +120,11 @@ that allows it, from the README's auto-mode section, and let them decide.
   (a rate limit, a timeout) fails the job with the provider's reason; it is
   never reported as completed with partial text.
 
-If it reports the workspace is unregistered or delegation is off, show the user
-the exact `register` line and stop. Do not register on their behalf: that flag
-is their decision about sending code off the machine.
+A repository needs no registration. If the dispatch reports that sending it to
+an external model has not been approved, show the user the exact
+`/foreman:allow` line and stop. Do not approve on their behalf: that is their
+decision about their source leaving the machine, and it is asked once per
+repository, so a worktree of an approved repository never asks again.
 
 ## Waiting
 

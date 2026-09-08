@@ -1,6 +1,6 @@
 {
   "name": "foreman",
-  "version": "1.15.0",
+  "version": "1.16.0",
   "private": true,
   "type": "module",
   "description": "Claude Code plugin runtime for delegating work to external models via OpenCode.",

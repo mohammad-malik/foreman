@@ -17,7 +17,7 @@ import {
   unregisterWorkspace
 } from "../registry.mjs";
 import { configFile } from "../state.mjs";
-import { canonicalize, containmentKey, findGitRoot } from "../workspace.mjs";
+import { canonicalize, containmentKey, findGitRoot, mainRepositoryRoot } from "../workspace.mjs";
 import { bullet, heading, keyValue } from "../render.mjs";
 
 /**
@@ -34,34 +34,38 @@ function storedEntry(root) {
 
 export function register(rawPath, { allowExternal = false, force = false } = {}) {
   if (!rawPath) {
-    throw new Error("Usage: register <path> [--allow-external]");
+    throw new Error("Usage: allow <path>");
   }
 
-  const target = canonicalize(rawPath);
+  const requested = canonicalize(rawPath);
 
-  if (!fs.existsSync(target)) {
-    throw new Error(`${target} does not exist.`);
+  if (!fs.existsSync(requested)) {
+    throw new Error(`${requested} does not exist.`);
   }
-  if (!fs.statSync(target).isDirectory()) {
-    throw new Error(`${target} is not a directory.`);
+  if (!fs.statSync(requested).isDirectory()) {
+    throw new Error(`${requested} is not a directory.`);
   }
 
-  const gitRoot = findGitRoot(target);
+  // The answer belongs to the repository, not to the directory that was named.
+  // Approving a subdirectory or a worktree and then being refused one level up
+  // was the friction that made this whole step feel like an obstacle.
+  const gitRoot = findGitRoot(requested);
+  const target = mainRepositoryRoot(requested) ?? gitRoot ?? requested;
   const lines = [];
 
   if (!gitRoot) {
     if (!force) {
       throw new Error(
         [
-          `${target} is not inside a git repository.`,
-          "Change attribution and revert both depend on git, so a non-repo workspace can be registered but write delegation will be refused there.",
-          "Register it anyway with --force if that is what you want."
+          `${requested} is not inside a git repository.`,
+          "Change attribution and revert both depend on git, so write delegation would be refused there anyway.",
+          "Approve it regardless with --force if that is what you want."
         ].join("\n")
       );
     }
     lines.push(bullet("no git repository found; write delegation will be refused here"));
-  } else if (gitRoot !== target) {
-    lines.push(bullet(`git repository root is ${gitRoot}`));
+  } else if (target !== requested) {
+    lines.push(bullet(`the whole repository is covered, from ${target}`));
   }
 
   const entry = registerWorkspace(target, { allowExternal });
@@ -81,9 +85,9 @@ export function register(rawPath, { allowExternal = false, force = false } = {})
   if (!stored) {
     throw new Error(
       [
-        `Registered ${entry.root}, but reading the allowlist back does not find it.`,
-        `Allowlist: ${configFile()}`,
-        "Nothing here is registered. Check whether another process is rewriting that file, then try again."
+        `Recorded a decision for ${entry.root}, but reading it back does not find it.`,
+        `Decisions are stored in: ${configFile()}`,
+        "Check whether another process is rewriting that file, then try again."
       ].join("\n")
     );
   }
@@ -91,19 +95,21 @@ export function register(rawPath, { allowExternal = false, force = false } = {})
   if (stored.allowExternal !== entry.allowExternal) {
     throw new Error(
       [
-        `Registered ${entry.root}, but the stored external-delegation flag reads ${stored.allowExternal} rather than ${entry.allowExternal}.`,
-        `Allowlist: ${configFile()}`,
-        "Treat this workspace as NOT cleared to send content off the machine until those two agree."
+        `Recorded a decision for ${entry.root}, but it reads back as ${stored.allowExternal} rather than ${entry.allowExternal}.`,
+        `Decisions are stored in: ${configFile()}`,
+        "Treat this repository as NOT cleared to send content off the machine until those two agree."
       ].join("\n")
     );
   }
 
-  lines.unshift(`Registered ${entry.root}`);
+  lines.unshift(
+    stored.allowExternal ? `Approved ${entry.root}` : `Withdrew approval for ${entry.root}`
+  );
   lines.push(
     bullet(
       stored.allowExternal
-        ? "external delegation ALLOWED: handoffs and repository content may be sent to OpenCode Zen, Moonshot and Fireworks"
-        : "local only: delegation is refused here until you re-register with --allow-external"
+        ? "handoffs and repository content may be sent to OpenCode Zen, Moonshot and Fireworks, from here and from any worktree of it"
+        : "delegation here is refused until it is approved again"
     )
   );
 
@@ -199,20 +205,24 @@ export function workspaces() {
   const entries = listWorkspaces();
 
   if (entries.length === 0) {
-    return "No workspaces registered.\nRegister one with: /foreman:register <path> [--allow-external]";
+    return [
+      "No repositories seen yet.",
+      "Any git repository works without setup. The first delegation from one asks whether its",
+      "source may go to an external model, and that answer is remembered."
+    ].join("\n");
   }
 
   return [
-    heading("Registered workspaces"),
+    heading("Repositories"),
     keyValue(
       entries.map((entry) => [
         entry.root,
-        entry.allowExternal ? "delegation allowed" : "local only"
+        entry.allowExternal ? "external delegation approved" : "not approved for external models"
       ])
     ),
     "",
-    // Named so that a registration which "did not stick" can be traced to two
+    // Named so that a decision which "did not stick" can be traced to two
     // runtimes reading different files rather than to a lost write.
-    `Allowlist: ${configFile()}`
+    `Decisions are stored in: ${configFile()}`
   ].join("\n");
 }

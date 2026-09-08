@@ -9,7 +9,14 @@
  */
 
 import { loadConfig, saveConfig } from "./state.mjs";
-import { canonicalize, containmentKey, isInside, workspaceSlug } from "./workspace.mjs";
+import {
+  canonicalize,
+  containmentKey,
+  findGitRoot,
+  isInside,
+  mainRepositoryRoot,
+  workspaceSlug
+} from "./workspace.mjs";
 
 export function listWorkspaces() {
   const config = loadConfig();
@@ -84,36 +91,52 @@ function runtimeForm(tail) {
 }
 
 /**
- * Resolve a path to the workspace that may act on it, or throw with the exact
- * command needed to fix the problem. `requireExternal` is set by anything that
- * would send repository content off the machine.
+ * Resolve a path to the workspace that may act on it.
+ *
+ * There is no registration step any more. Pointing foreman at a repository is
+ * the act of choosing it, and making that a separate command bought nothing:
+ * it refused worktrees of repositories that were already approved, and the
+ * answer to every refusal was to type the command it had just printed.
+ *
+ * One decision survives, because it is the only one with a consequence that
+ * leaves the machine: whether this repository's source may be sent to OpenCode
+ * Zen, Moonshot and Fireworks. That is asked once per repository and then
+ * remembered, and a worktree inherits its main checkout's answer.
  */
 export function requireWorkspaceFor(rawPath, { requireExternal = false } = {}) {
   const target = canonicalize(rawPath);
-  const workspace = findWorkspaceFor(target);
 
-  if (!workspace) {
-    throw new Error(
-      [
-        `${target} is not inside any registered workspace.`,
-        "Register it first, in this session or a terminal:",
-        `  /foreman:register ${target}`,
-        ...runtimeForm(`register "${target}"`)
-      ].join("\n")
-    );
+  // The workspace stays the checkout that was actually named, worktree and
+  // all. Everything downstream depends on that: the server's directory, the
+  // git baseline, revert, and the refusal to run two writers in one tree. Only
+  // the approval is shared, so a `--write` job dispatched at a worktree edits
+  // that worktree rather than the branch its main checkout happens to be on.
+  const root = findGitRoot(target) ?? target;
+  const workspace = findWorkspaceFor(root) ?? registerWorkspace(root, { allowExternal: false });
+
+  if (!requireExternal || workspace.allowExternal) {
+    return { workspace, target };
   }
 
-  if (requireExternal && !workspace.allowExternal) {
-    throw new Error(
-      [
-        `Workspace ${workspace.root} is registered but external delegation is off.`,
-        "Delegating sends your handoff and whatever the agent reads to OpenCode Zen, Moonshot and Fireworks.",
-        "Turn it on for this repository only if that is acceptable:",
-        `  /foreman:register ${workspace.root} --allow-external`,
-        ...runtimeForm(`register "${workspace.root}" --allow-external`)
-      ].join("\n")
-    );
+  // A worktree inherits its main checkout's answer. Being asked once per
+  // worktree, for repositories already approved, is what made this step feel
+  // like an obstacle rather than a decision.
+  const main = mainRepositoryRoot(target);
+  const inherited = main && containmentKey(main) !== containmentKey(root) ? findWorkspaceFor(main) : null;
+
+  if (inherited?.allowExternal) {
+    return { workspace: registerWorkspace(root, { allowExternal: true }), target };
   }
 
-  return { workspace, target };
+  const askAbout = inherited?.root ?? main ?? workspace.root;
+
+  throw new Error(
+    [
+      `Sending ${askAbout} to an external model has not been approved yet.`,
+      "Delegating sends your handoff and whatever the agent reads to OpenCode Zen, Moonshot and Fireworks.",
+      "Approve this repository once, and its worktrees are covered too:",
+      `  /foreman:allow ${askAbout}`,
+      ...runtimeForm(`allow "${askAbout}"`)
+    ].join("\n")
+  );
 }

@@ -135,3 +135,65 @@ export function findGitRoot(startPath) {
     current = parent;
   }
 }
+
+/**
+ * The main checkout a path belongs to, following a worktree home.
+ *
+ * A linked worktree has a `.git` FILE reading `gitdir: <main>/.git/worktrees/x`
+ * rather than a directory, so findGitRoot stops at the worktree and treats it
+ * as a separate repository. It is not one. It shares history, remotes, and the
+ * only question that matters here: whether this source may leave the machine.
+ * Answering that once per worktree was friction with nothing behind it.
+ *
+ * Falls back to the worktree whenever the pointer is missing or malformed. A
+ * worktree treated as its own repository is a repeated question; a wrong guess
+ * about which repository this is would silently borrow another repo's answer.
+ */
+export function mainRepositoryRoot(startPath) {
+  const root = findGitRoot(startPath);
+  if (!root) {
+    return null;
+  }
+
+  const dotGit = path.join(root, ".git");
+
+  let stat;
+  try {
+    stat = fs.statSync(dotGit);
+  } catch {
+    return root;
+  }
+
+  if (stat.isDirectory()) {
+    return root;
+  }
+
+  let pointer;
+  try {
+    pointer = fs.readFileSync(dotGit, "utf8");
+  } catch {
+    return root;
+  }
+
+  const match = pointer.match(/^\s*gitdir:\s*(.+?)\s*$/mu);
+  if (!match) {
+    return root;
+  }
+
+  // gitdir is <main>/.git/worktrees/<name>, possibly written relative to the
+  // worktree. Two levels above it is the main .git directory.
+  const gitDir = path.resolve(root, match[1]);
+  const worktrees = path.dirname(gitDir);
+
+  if (path.basename(worktrees).toLowerCase() !== "worktrees") {
+    return root;
+  }
+
+  const commonDir = path.dirname(worktrees);
+  if (path.basename(commonDir).toLowerCase() !== ".git") {
+    return root;
+  }
+
+  const main = path.dirname(commonDir);
+  return fs.existsSync(main) ? canonicalize(main) : root;
+}

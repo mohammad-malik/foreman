@@ -45,7 +45,7 @@ function findJobAnywhere(jobID) {
     }
   }
 
-  throw new Error(`No job ${jobID} in any registered workspace.`);
+  throw new Error(`No job ${jobID} in any repository foreman knows about.`);
 }
 
 /**

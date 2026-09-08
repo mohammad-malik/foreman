@@ -150,7 +150,7 @@ export async function waitForJobs(jobIDs = [], { timeoutSeconds = 3600, all = fa
   const sessionID = currentSessionID();
 
   if (workspaces.length === 0) {
-    return "No workspaces registered, so there is nothing to wait for.";
+    return "No repositories seen yet, so there is nothing to wait for.";
   }
 
   for (;;) {

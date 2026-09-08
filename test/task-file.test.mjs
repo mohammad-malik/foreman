@@ -51,8 +51,8 @@ test("a UTF-16LE handoff is decoded, not mangled", () => {
 
   const output = withFile(bytes, dispatch);
 
-  // It got past parsing to the workspace gate, which means the text decoded.
-  assert.match(output, /not inside any registered workspace|delegation is off/u);
+  // It got past parsing to the approval gate, which means the text decoded.
+  assert.match(output, /has not been approved yet/u);
   assert.doesNotMatch(output, /corrupted/u);
 });
 

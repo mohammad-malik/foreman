@@ -2,7 +2,7 @@
 
 Hand a coding task to a non-Claude model through OpenCode, then verify what it actually did.
 
-Claude stays the orchestrator: it writes the handoff, an external model (Kimi, GLM) does the work in one registered repository, and the result is checked against git rather than taken from the model's own summary.
+Claude stays the orchestrator: it writes the handoff, an external model (Kimi, GLM) does the work in one git repository, and the result is checked against git rather than taken from the model's own summary.
 
 ## Setup
 
@@ -11,14 +11,15 @@ claude plugin marketplace add C:\Users\MohammadMalik\Documents\Codex\foreman
 claude plugin install foreman@local -s user
 ```
 
-Then, in a repository you want to use it in:
+That is the whole setup. There is no per-repository registration: point foreman at any git repository and it works, worktrees included.
+
+The first time you delegate from a repository, it asks one question, because delegating sends your handoff and whatever the agent reads to OpenCode Zen, Moonshot and Fireworks:
 
 ```
-/foreman:setup
-/foreman:register . --allow-external
+/foreman:allow .
 ```
 
-`--allow-external` is a separate decision on purpose. Without it the repository is registered but delegation is refused, because delegating sends your handoff and whatever the agent reads to OpenCode Zen, Moonshot and Fireworks.
+Asked once per repository, remembered, and inherited by every worktree of it. `/foreman:deny .` takes it back. Local work is never gated.
 
 ## Using it
 
@@ -51,7 +52,7 @@ To allow that once, add a rule to `.claude/settings.json` in the repository, or 
 }
 ```
 
-That allows dispatch, not node in general, and it removes no gate: the workspace still has to be registered, `--allow-external` still has to be on, and `--write` still needs a clean tree and a git baseline.
+That allows dispatch, not node in general, and it removes no gate: the repository still has to be approved for external delegation, and `--write` still needs a clean tree and a git baseline.
 
 ## Models
 
@@ -111,7 +112,7 @@ honest; until then that list is empty.
 
 ## What it will not do
 
-- Delegate anywhere you have not registered, or send content from a repository without `--allow-external`.
+- Send a repository's content to an external model before you have approved that repository.
 - Infer write access. `--write` is always explicit.
 - Write into a dirty tree, or start a second write job in a repository that already has one running, without `--allow-dirty-tree`, because the agent's edits could not be told from yours or from each other's.
 - Answer the agent's permission requests for you.

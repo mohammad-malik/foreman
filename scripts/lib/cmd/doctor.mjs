@@ -188,7 +188,7 @@ export function doctor() {
 
   const workspaces = listWorkspaces();
   if (workspaces.length === 0) {
-    record("info", "Registered", "none yet. Register one with /foreman:register <path>");
+    record("info", "Repositories", "none seen yet. Any git repository works; the first delegation from one asks about egress.");
   } else {
     record("ok", "Registered", `${workspaces.length}`);
     lines.push(

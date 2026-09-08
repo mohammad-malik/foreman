@@ -53,9 +53,10 @@ Human-invoked:
                                 "permit allow" is usually enough.
   cancel [job-id]               Stop a running job
   revert <job-id>               Restore only the files a job changed
-  register <path> [--allow-external] [--force]
-                                Add a workspace to the allowlist
-  unregister <path> [--force]    Remove a workspace, stopping its server
+  allow <path> [--force]        Approve a repository's source leaving the
+                                machine. Asked once; worktrees are covered.
+  deny <path> [--force]         Withdraw that approval
+  forget <path> [--force]       Drop a repository entirely, stopping its server
 
 Maintenance:
   server-start [path]           Start or reuse this workspace's server
@@ -187,10 +188,34 @@ const COMMANDS = {
     return 0;
   },
 
-  register: (argv, raw) => {
+  allow: (argv, raw) => {
     // Read from the raw string rather than parsed tokens. A path is never
     // reassembled from pieces, so `C:\My  Projects` keeps both spaces and
     // `C:\Users\O'Brien` keeps its apostrophe.
+    //
+    // --allow-external is still accepted and ignored. It was required on the
+    // old `register`, so it is in muscle memory and in old notes, and erroring
+    // on it would refuse a command that means exactly what it says.
+    const { path, flags } = extractPath(raw, ["allow-external", "force"], argv);
+    process.stdout.write(
+      `${register(path, { allowExternal: true, force: flags.has("force") })}\n`
+    );
+    return 0;
+  },
+
+  deny: (argv, raw) => {
+    const { path, flags } = extractPath(raw, ["force"], argv);
+    process.stdout.write(
+      `${register(path, { allowExternal: false, force: flags.has("force") })}\n`
+    );
+    return 0;
+  },
+
+  // The old spelling, with its old meaning. It is not an alias for `allow`:
+  // bare `register <path>` meant local-only, and quietly turning that into an
+  // approval would send a repository's source off the machine on the strength
+  // of a command that used to say the opposite.
+  register: (argv, raw) => {
     const { path, flags } = extractPath(raw, ["allow-external", "force"], argv);
     process.stdout.write(
       `${register(path, {
@@ -201,7 +226,9 @@ const COMMANDS = {
     return 0;
   },
 
-  unregister: async (argv, raw) => {
+  // Kept because a stale server has to be reachable to be stopped, and because
+  // a repository someone wants forgotten entirely should not need a file edit.
+  forget: async (argv, raw) => {
     const { path, flags } = extractPath(raw, ["force"], argv);
     process.stdout.write(`${await unregister(path, { force: flags.has("force") })}\n`);
     return 0;
@@ -419,7 +446,12 @@ async function main() {
     return 0;
   }
 
-  const command = COMMANDS[name];
+  // The old names still work. They are in slash commands, in notes and in
+  // half-finished sessions, and breaking them to rename a concept would be a
+  // second round of friction on top of the one this change removes.
+  const ALIASES = { unregister: "forget", repos: "workspaces" };
+
+  const command = COMMANDS[ALIASES[name] ?? name];
   if (!command) {
     process.stderr.write(`${fail(`Unknown command "${name}".`, USAGE)}\n`);
     return 2;
