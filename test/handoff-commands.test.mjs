@@ -330,3 +330,34 @@ test("a reporting request excuses only itself", () => {
 
   assert.equal(commandInstructions(task).length, 2);
 });
+
+test("a runner outside the known list is still a command", () => {
+  // A fixed list of program names cannot be complete, and `bun test` was
+  // passing straight through to an agent with no shell.
+  const task = ["Run bun test and report the result.", "Execute deno lint."].join("\n");
+
+  assert.equal(commandInstructions(task).length, 2);
+});
+
+test("a repository's own script is a command", () => {
+  const task = [
+    "Run ./verify.sh and paste the output.",
+    "Execute scripts/check.py against the fixtures.",
+    "Run build.ps1 first."
+  ].join("\n");
+
+  assert.equal(commandInstructions(task).length, 3);
+});
+
+test("widening the list did not swallow ordinary prose", () => {
+  // The path pattern is the risky one: it must not match every hyphenated
+  // word or every sentence with a slash in it.
+  const task = [
+    "Run through the sign-up flow and describe it.",
+    "Explain the read/write split.",
+    "The CI will run bun test on merge.",
+    "Do not run ./verify.sh."
+  ].join("\n");
+
+  assert.deepEqual(commandInstructions(task), []);
+});

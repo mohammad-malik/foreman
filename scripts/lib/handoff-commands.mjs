@@ -295,8 +295,26 @@ function withoutQuotedInstructions(clause) {
 }
 
 /** Programs a handoff plausibly asks to be run. */
-const COMMANDS =
-  "npm|npx|pnpm|yarn|node|git|python3?|pytest|cargo|go|make|dotnet|mvn|gradle|bash|sh|pwsh|powershell|tsc|eslint|jest|vitest|rg|grep|ls|cat";
+const PROGRAMS =
+  "npm|npx|pnpm|yarn|bun|deno|node|git|gh|python3?|pip3?|pytest|tox|ruff|mypy|cargo|rustc|go|make|cmake|dotnet|mvn|gradle|rake|bundle|composer|phpunit|swift|bash|sh|zsh|pwsh|powershell|tsc|eslint|prettier|jest|vitest|playwright|cypress|docker|kubectl|terraform|rg|grep|find|ls|cat|curl|wget";
+
+/**
+ * Something the handoff is telling the agent to run.
+ *
+ * A fixed list of program names is not enough on its own: a repository's own
+ * script is just as much a command, and `Run ./verify.sh` was passing straight
+ * through. So a path-shaped word and a known extension count too.
+ */
+const COMMANDS = [
+  PROGRAMS,
+  // ./verify.sh, .\build.ps1
+  "\\.{1,2}[\\\\/][\\w.\\\\/-]+",
+  // scripts/check.py. An extension is required, so "the read/write split"
+  // stays prose rather than becoming a command.
+  "[\\w-]+(?:[\\\\/][\\w-]+)*[\\\\/][\\w-]+\\.(?:sh|ps1|bat|cmd|py|rb|mjs|cjs|js|ts)",
+  // verify.sh, build.ps1, check.bat, run.cmd
+  "[\\w.-]+\\.(?:sh|ps1|bat|cmd|py|rb|mjs|cjs|js)"
+].join("|");
 
 /**
  * Whether the clause tells the agent to run a named command.
