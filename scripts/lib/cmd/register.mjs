@@ -1,9 +1,10 @@
 /**
- * Workspace registration commands.
+ * The one decision a person still makes: whether a repository's source may be
+ * sent to an external model.
  *
- * Registering is deliberately a separate, human-run step from delegating. It
- * is the moment you decide a directory is fair game, and `--allow-external` is
- * the moment you decide its contents may leave the machine.
+ * There is no registration step. A repository becomes known by being worked
+ * in, and only egress is asked about, once, at the repository level. A
+ * worktree inherits that answer rather than being asked again.
  */
 
 import fs from "node:fs";
@@ -11,6 +12,8 @@ import fs from "node:fs";
 import { hasActiveJobs } from "../jobs.mjs";
 import { ACTIVE_JOBS_REASON, stopServer } from "../servers.mjs";
 import {
+  approvalOwner,
+  findWorkspaceExactly,
   findWorkspaceFor,
   listWorkspaces,
   registerWorkspace,
@@ -20,17 +23,6 @@ import { configFile } from "../state.mjs";
 import { canonicalize, containmentKey, findGitRoot, mainRepositoryRoot } from "../workspace.mjs";
 import { bullet, heading, keyValue } from "../render.mjs";
 
-/**
- * The allowlist entry for exactly this path, re-read from disk.
- *
- * Exact rather than by containment: a parent's entry is not evidence that the
- * child was written, and treating it as such is how a failed write would be
- * reported as a success.
- */
-function storedEntry(root) {
-  const key = containmentKey(root);
-  return listWorkspaces().find((entry) => containmentKey(entry.root) === key) ?? null;
-}
 
 export function register(rawPath, { allowExternal = false, force = false } = {}) {
   if (!rawPath) {
@@ -80,7 +72,7 @@ export function register(rawPath, { allowExternal = false, force = false } = {})
   // directory, a concurrent registration, or a config replaced underneath us.
   // Whichever it is, naming it beats a success message the allowlist does not
   // back up.
-  const stored = storedEntry(target);
+  const stored = findWorkspaceExactly(target);
 
   if (!stored) {
     throw new Error(
@@ -215,10 +207,21 @@ export function workspaces() {
   return [
     heading("Repositories"),
     keyValue(
-      entries.map((entry) => [
-        entry.root,
-        entry.allowExternal ? "external delegation approved" : "not approved for external models"
-      ])
+      entries.map((entry) => {
+        // Effective, not stored. A worktree's own flag is never set, so
+        // printing it would report an approved repository's worktrees as
+        // refused, which is the opposite of what a dispatch there would do.
+        const owner = approvalOwner(entry.root);
+        if (owner?.allowExternal) {
+          return [
+            entry.root,
+            containmentKey(owner.root) === containmentKey(entry.root)
+              ? "external delegation approved"
+              : "approved, via its main checkout"
+          ];
+        }
+        return [entry.root, "not approved for external models"];
+      })
     ),
     "",
     // Named so that a decision which "did not stick" can be traced to two

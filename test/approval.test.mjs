@@ -74,11 +74,14 @@ test("a worktree inherits its main checkout's approval", async (t) => {
 
   registry.registerWorkspace(root, { allowExternal: true });
 
+  // Permitted now, and still pointed at the worktree. The approval itself is
+  // deliberately NOT copied onto the worktree entry: it is read from the main
+  // checkout each time, so revoking it there takes effect here.
   const resolved = registry.requireWorkspaceFor(worktree, { requireExternal: true });
 
-  // Inherited, and still pointed at the worktree.
-  assert.equal(resolved.workspace.allowExternal, true);
   assert.equal(resolved.workspace.root, worktree);
+  assert.equal(resolved.workspace.allowExternal, false);
+  assert.equal(registry.approvalOwner(worktree).root, root);
 });
 
 test("the refusal names the repository to approve, not the worktree", async (t) => {
@@ -115,6 +118,80 @@ test("approval does not leak between sibling repositories", async (t) => {
 
   assert.throws(
     () => registry.requireWorkspaceFor(b.worktree, { requireExternal: true }),
+    /has not been approved yet/u
+  );
+});
+
+test("a job dispatched at a worktree runs in that worktree", async (t) => {
+  // The main checkout is registered and contains the worktree on disk, so a
+  // containment lookup returned the main repository for every worktree path.
+  // Every job dispatched from any worktree then ran in the main tree, against
+  // files that only exist on the worktree's branch, and the handoff was
+  // refused for naming paths that were right there.
+  const { root, worktree } = repoWithWorktree();
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-state-"));
+  const registry = await freshRegistry(stateDir);
+
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    delete process.env.FOREMAN_STATE_DIR;
+  });
+
+  registry.registerWorkspace(root, { allowExternal: true });
+
+  for (const requireExternal of [false, true]) {
+    const resolved = registry.requireWorkspaceFor(worktree, { requireExternal });
+    assert.equal(resolved.workspace.root, worktree);
+  }
+});
+
+test("a subdirectory still resolves to its repository root", async (t) => {
+  // Containment was right for this case, and dropping it must not break it:
+  // a path inside a repository is the repository, because findGitRoot walks up.
+  const { root } = repoWithWorktree();
+  const nested = path.join(root, "packages", "thing");
+  fs.mkdirSync(nested, { recursive: true });
+
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-state-"));
+  const registry = await freshRegistry(stateDir);
+
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    delete process.env.FOREMAN_STATE_DIR;
+  });
+
+  registry.registerWorkspace(root, { allowExternal: true });
+
+  const resolved = registry.requireWorkspaceFor(nested, { requireExternal: true });
+  assert.equal(resolved.workspace.root, root);
+});
+
+test("revoking the repository revokes its worktrees", async (t) => {
+  // A worktree that had already run held its own approved entry, so `deny` on
+  // the repository left it delegating happily. Approval is read from the main
+  // checkout every time rather than copied down.
+  const { root, worktree } = repoWithWorktree();
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-state-"));
+  const registry = await freshRegistry(stateDir);
+
+  t.after(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(stateDir, { recursive: true, force: true });
+    delete process.env.FOREMAN_STATE_DIR;
+  });
+
+  registry.registerWorkspace(root, { allowExternal: true });
+  assert.equal(
+    registry.requireWorkspaceFor(worktree, { requireExternal: true }).workspace.root,
+    worktree
+  );
+
+  registry.registerWorkspace(root, { allowExternal: false });
+
+  assert.throws(
+    () => registry.requireWorkspaceFor(worktree, { requireExternal: true }),
     /has not been approved yet/u
   );
 });
