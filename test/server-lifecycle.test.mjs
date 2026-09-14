@@ -232,3 +232,70 @@ test("ps is asked for the full command line, not a truncated one", async () => {
   // says "not our process" about a process that is very much ours.
   assert.match(source, /"ps", \["-ww", "-p"/);
 });
+
+test("compare-and-stop spares a server someone else already replaced", () => {
+  // Two sessions can both decide to replace the same stale server. Without
+  // naming the pid we decided about, the second stop kills the replacement the
+  // first just started, and the first session's dispatch dies on a connection
+  // error it did nothing to deserve.
+  writeRunningLock();
+
+  return stopServer(WORKSPACE, { expectPid: process.pid + 1 }).then((outcome) => {
+    assert.equal(outcome.stopped, false);
+    assert.match(outcome.reason, /another server is already running/u);
+
+    // Untouched: the record is still there, and nothing was killed.
+    assert.equal(JSON.parse(fs.readFileSync(lockPath(), "utf8")).pid, process.pid);
+  });
+});
+
+test("compare-and-stop still acts when the pid is the one it checked", async () => {
+  writeRunningLock({ pid: 999_999_999 });
+
+  const outcome = await stopServer(WORKSPACE, { expectPid: 999_999_999 });
+
+  assert.notEqual(outcome.reason, "another server is already running here");
+});
+
+test("stopping does not delete a replacement's claim", async () => {
+  // Between reading a record and killing its process, another session can kill
+  // the same server and claim its replacement. Clearing unconditionally there
+  // deletes that claim, both sessions launch a server, and the later lock
+  // write orphans the other one: live, authenticated, and invisible.
+  writeRunningLock({ pid: 999_999_998 });
+
+  const stop = stopServer(WORKSPACE, { reason: "test" });
+
+  // The replacement's claim, written while the stop is in flight.
+  fs.writeFileSync(
+    lockPath(),
+    JSON.stringify({ status: "starting", pid: 424_242, workspaceRoot: REPO }),
+    "utf8"
+  );
+
+  await stop;
+
+  const after = JSON.parse(fs.readFileSync(lockPath(), "utf8"));
+  assert.equal(after.pid, 424_242, "the replacement's claim was deleted");
+});
+
+test("a claim written where there was no lock at all survives", async () => {
+  // readLock returning null is not permission to unlink: it happens while a
+  // replacement's claim is mid-write, and clearing then lets both sessions
+  // launch a server.
+  try {
+    fs.unlinkSync(lockPath());
+  } catch {
+    // Already absent, which is the state this case wants.
+  }
+
+  const stop = stopServer(WORKSPACE, { reason: "test" });
+  fs.writeFileSync(
+    lockPath(),
+    JSON.stringify({ status: "starting", pid: 515_151, workspaceRoot: REPO }),
+    "utf8"
+  );
+  await stop;
+
+  assert.equal(JSON.parse(fs.readFileSync(lockPath(), "utf8")).pid, 515_151);
+});

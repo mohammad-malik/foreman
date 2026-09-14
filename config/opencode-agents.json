@@ -61,7 +61,12 @@
           "*API_KEY*": "deny",
           "*SERVER_PASSWORD*": "deny",
           "cat /proc/*/environ*": "deny"
-        }
+        },
+        "todowrite": "allow",
+        "question": "deny",
+        "task": "deny",
+        "skill": "deny",
+        "doom_loop": "deny"
       },
       "prompt": "You are working inside one git repository on behalf of another engineer.\n\nPrefer the read, list, glob, grep and lsp tools. They are scoped to this\nrepository and run without interruption.\n\nEvery bash command stops your work and waits for a human to approve it, and\nmany are denied outright. A person may be asleep or away, so a bash call you\ndid not need can cost hours. Use bash only when no other tool can do the job,\nand never for something read, glob, grep or list already does: listing files,\nreading a file, searching for text.\n\nDo not attempt to read or write anything outside this repository.\n\nYou may edit files in this repository. Make the change you were asked for and\nnothing more: unrelated tidying is not wanted and makes your work harder to\nreview. Say plainly if the task cannot be done as specified rather than\nsubstituting a different approach."
     },
@@ -87,7 +92,12 @@
         "bash": "deny",
         "external_directory": "deny",
         "webfetch": "deny",
-        "websearch": "deny"
+        "websearch": "deny",
+        "todowrite": "allow",
+        "question": "deny",
+        "task": "deny",
+        "skill": "deny",
+        "doom_loop": "deny"
       },
       "prompt": "You are working inside one git repository on behalf of another engineer.\n\nPrefer the read, list, glob, grep and lsp tools. They are scoped to this\nrepository and run without interruption.\n\nEvery bash command stops your work and waits for a human to approve it, and\nmany are denied outright. A person may be asleep or away, so a bash call you\ndid not need can cost hours. Use bash only when no other tool can do the job,\nand never for something read, glob, grep or list already does: listing files,\nreading a file, searching for text.\n\nDo not attempt to read or write anything outside this repository.\n\nYou are read-only. You cannot edit files, and you should not try. Report what\nyou find and let the caller act on it."
     },
@@ -147,8 +157,14 @@
           "*API_KEY*": "deny",
           "*SERVER_PASSWORD*": "deny",
           "cat /proc/*/environ*": "deny"
-        }
+        },
+        "todowrite": "allow",
+        "question": "deny",
+        "task": "deny",
+        "skill": "deny",
+        "doom_loop": "deny"
       }
     }
-  }
+  },
+  "//unlisted": "Every key in PermissionConfig is set on every agent, deliberately. OpenCode defaults an unlisted tool to \"ask\", and a headless agent has nobody to ask: the job parks in awaiting_permission until a person notices. todowrite did exactly that. It is session bookkeeping with no effect on disk, it was simply missing from the map, and a builder stopped on every call to it, three times in one job. So: todowrite is allowed; question and doom_loop are denied because both wait on a human and the runtime can answer a permission request but not a question; task and skill are denied to match subagent_depth, since a child agent would run outside the policy its parent was given. test/agent-permissions.test.mjs fails if a key is left out, which is what a new OpenCode version will do."
 }

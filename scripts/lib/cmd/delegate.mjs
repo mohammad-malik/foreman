@@ -11,7 +11,8 @@
 
 import { listWorkspaces, requireWorkspaceFor } from "../registry.mjs";
 import { reconcileAll } from "../reconcile.mjs";
-import { acquireServer, sweep, touch } from "../servers.mjs";
+import { acquireServer, permissionGaps, sweep, touch } from "../servers.mjs";
+import { describeUndecided } from "../permission-keys.mjs";
 import { detectVersion, loadInventory } from "../opencode.mjs";
 import { codexModels, detectCodexVersion, codexSignedIn } from "../codex.mjs";
 import { judgeCodexJob, readCodexJob, startCodexJob } from "../codex-job.mjs";
@@ -253,7 +254,11 @@ export async function delegate({
     });
   }
 
+  // acquireServer replaces a server whose permission policy is out of date
+  // before returning it, so by here the policy is current or the dispatch has
+  // already been refused.
   const server = await acquireServer(workspace);
+
   const api = new OpencodeApi(server);
 
   // The record exists before the session does. A queued job counts as active,
@@ -305,6 +310,18 @@ export async function delegate({
 
   touch(workspace.slug);
 
+  // Probed now rather than straight after acquireServer. This costs a round
+  // trip to /doc, and in that window a concurrent dispatch carrying a newer
+  // policy would see no active job and replace the server underneath this one.
+  // The job record is what marks the server as in use.
+  //
+  // What is left to report is a tool this OpenCode knows and the plugin has
+  // not decided: the job would park on its first call to it with no
+  // explanation, which is how a builder lost twenty minutes to todowrite.
+  const notes = describeUndecided(await permissionGaps(server, workspace.slug)).map((line) =>
+    bullet(line)
+  );
+
   const header = [
     `Dispatched ${job.id} to ${resolved.qualified}`,
     keyValue([
@@ -314,6 +331,8 @@ export async function delegate({
       ["session", session.id]
     ])
   ];
+
+  header.push(...notes);
 
   if (unattended) {
     header.push(

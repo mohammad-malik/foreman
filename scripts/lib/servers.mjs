@@ -42,6 +42,7 @@ import {
   terminateProcessTree
 } from "./process.mjs";
 import { credentialEnv } from "./credentials.mjs";
+import { undecidedPermissions } from "./permission-keys.mjs";
 import { opencodeBinary, OpencodeError } from "./opencode.mjs";
 import { hasActiveJobs } from "./jobs.mjs";
 import { readJsonIfPresent, renameWithRetry, stateRoot, workspaceStateDir } from "./state.mjs";
@@ -92,6 +93,71 @@ function clearLock(slug) {
   } catch {
     // Already gone, which is the state we wanted.
   }
+}
+
+/**
+ * Clear the lock only while it still describes the server we acted on.
+ *
+ * Between reading a record and killing its process, another session can kill
+ * the same server and write a `starting` claim for its replacement. Clearing
+ * unconditionally at that point deletes the replacement's claim, both sessions
+ * then launch a server, and the later lock write orphans the other one: live,
+ * authenticated, write-capable, and invisible to every command that could stop
+ * it. So the record is re-read and compared first.
+ */
+function clearLockIfStill(slug, pid) {
+  const current = readLock(slug);
+
+  // A null read is not permission to unlink. It happens when another stopper
+  // already removed the record, and it also happens while a replacement's
+  // claim is mid-write: unlinking then deletes that claim and both sessions
+  // launch a server. Nothing to clear is the same answer as "not ours".
+  if (!current || current.pid !== pid) {
+    return false;
+  }
+
+  // Rename rather than unlink, because rename is atomic and unlink is not the
+  // half of a check-then-delete that can be made safe. Between the read above
+  // and a delete, another process can write its replacement claim to this same
+  // path, and the delete would take that claim with it. Moving the file aside
+  // in one operation leaves the path free for a `wx` claim, and if the record
+  // changed underneath us the rename fails and we have destroyed nothing.
+  const file = lockFile(slug);
+  const aside = `${file}.stopped.${process.pid}`;
+
+  try {
+    fs.renameSync(file, aside);
+  } catch {
+    return false;
+  }
+
+  let moved;
+  try {
+    moved = JSON.parse(fs.readFileSync(aside, "utf8"));
+  } catch {
+    moved = null;
+  }
+
+  // Unreadable counts as somebody else's. A claim caught mid-write parses as
+  // nothing, and unlinking it would let its owner launch a server that no lock
+  // describes while a third process claims the freed path.
+  if (!moved || moved.pid !== pid) {
+    try {
+      fs.renameSync(aside, file);
+    } catch {
+      // The path is taken by a newer claim, which is the state we wanted
+      // anyway: that claim is live and this record described a dead server.
+    }
+    return false;
+  }
+
+  try {
+    fs.unlinkSync(aside);
+  } catch {
+    // Already gone, which is the state we wanted.
+  }
+
+  return true;
 }
 
 /**
@@ -370,6 +436,118 @@ export function authHeader(password) {
   return `Basic ${Buffer.from(`${AUTH_USERNAME}:${password}`).toString("base64")}`;
 }
 
+/**
+ * Permission keys this OpenCode knows that our agents do not decide.
+ *
+ * Reads the server's own OpenAPI document, the same one `health` probes, so a
+ * version that adds a tool is caught by the server rather than by a constant
+ * in our tree that can only ever agree with itself. Returns an empty list when
+ * everything is decided, and null when the check could not run at all: a
+ * server that is down, or a document shaped differently, is not the same thing
+ * as a clean bill of health and must not read as one.
+ */
+export async function permissionGaps(server, slug, { timeout = HEALTH_TIMEOUT_MS } = {}) {
+  let doc;
+  try {
+    const response = await fetch(`${server.url}/doc`, {
+      headers: { authorization: authHeader(server.password) },
+      signal: AbortSignal.timeout(timeout)
+    });
+    if (!response.ok) {
+      return null;
+    }
+    doc = await response.json();
+  } catch {
+    return null;
+  }
+
+  // The config this server actually loaded, not the one on disk in the plugin.
+  // A server is reused for fifteen minutes after its last job and keeps the
+  // policy it started with, so upgrading the plugin mid-session leaves a live
+  // server running the old rules. Reading the source here would have reported
+  // a clean check while the running agent still had no answer for todowrite,
+  // which is the precise failure this exists to catch.
+  const running = readGeneratedAgents(slug);
+  if (!running) {
+    return null;
+  }
+
+  const gaps = undecidedPermissions(doc, running.agent);
+  if (gaps === null) {
+    return null;
+  }
+
+  // Different from the source means this server predates the current policy.
+  // It is not an undecided key, it is a stale process, and the fix is a
+  // restart rather than an edit.
+  if (running.stale) {
+    return [...gaps, { agent: "this server", missing: [], stale: true }];
+  }
+
+  return gaps;
+}
+
+/**
+ * The agent block a running server loaded, and whether it still matches the
+ * plugin's own config.
+ */
+function readGeneratedAgents(slug) {
+  const generated = path.join(stateRoot(), "opencode-config", slug ?? "shared", "opencode.json");
+  const source = path.resolve(HERE, "..", "..", "config", "opencode-agents.json");
+
+  let running;
+  try {
+    running = JSON.parse(fs.readFileSync(generated, "utf8"));
+  } catch {
+    return null;
+  }
+
+  if (!running?.agent) {
+    return null;
+  }
+
+  let ours;
+  try {
+    ours = JSON.parse(fs.readFileSync(source, "utf8")).agent;
+  } catch {
+    return { agent: running.agent, stale: false };
+  }
+
+  // Permissions only. A plugin update that rewords a prompt or a description
+  // changes the agent block without changing a single rule, and comparing the
+  // whole thing would announce a stale policy on every dispatch thereafter.
+  return {
+    agent: running.agent,
+    stale: permissionsOf(running.agent) !== permissionsOf(ours)
+  };
+}
+
+/** True when a running server's policy still matches the plugin's own. */
+export function policyMatches(slug) {
+  const running = readGeneratedAgents(slug);
+  // Unknown is not stale. A server whose generated config cannot be read is
+  // reported by permissionGaps as an unavailable check; destroying it on a
+  // missing file would kill working servers over a bookkeeping problem.
+  return running ? !running.stale : true;
+}
+
+/**
+ * A comparable string of every agent's permission block, and nothing else.
+ *
+ * Key order is preserved deliberately. OpenCode applies the LAST matching
+ * rule, which is why the catch-all comes first and the specifics follow in
+ * these configs, so a reordering is a different policy even when the same
+ * rules are present. Only the agent names are sorted, because agents are
+ * independent of one another.
+ */
+function permissionsOf(agents) {
+  return JSON.stringify(
+    Object.keys(agents ?? {})
+      .sort()
+      .map((name) => [name, agents[name]?.permission ?? null])
+  );
+}
+
 export async function health(server, { timeout = HEALTH_TIMEOUT_MS } = {}) {
   try {
     const response = await fetch(`${server.url}/doc`, {
@@ -603,6 +781,22 @@ export function touch(slug) {
  * Safe to call concurrently from separate sessions.
  */
 const ACQUIRE_RETRY_MS = 500;
+// Long enough to cover acquireServer returning and delegate writing the job
+// record, which is a handful of local calls.
+const FRESH_TOUCH_MS = 10_000;
+// stopServer outcomes that mean "no server, no record", as opposed to a live
+// process it declined or failed to kill.
+const CLEARED_LOCK_REASONS = new Set([
+  "no server recorded",
+  "stale record, pid reused",
+  "cleared a partial start record"
+]);
+
+/** True when some session took this server too recently to have recorded a job. */
+function recentlyTouched(record) {
+  const at = Date.parse(record?.lastActivityAt ?? record?.startedAt ?? "");
+  return Number.isFinite(at) && Date.now() - at < FRESH_TOUCH_MS;
+}
 // The waiting session must be patient for at least as long as the winning one
 // is allowed to take. Giving up sooner turns an ordinary cold start into a
 // spurious failure in whichever session happened to arrive second.
@@ -622,8 +816,80 @@ export async function acquireServer(workspace, { attempt = 0 } = {}) {
 
   if (existing?.status === "running") {
     if (looksLikeOurServer(existing) && (await healthWithRetry(existing))) {
-      touch(slug);
-      return existing;
+      // A server keeps the permission policy it started with, so upgrading the
+      // plugin mid-session leaves a live server running the old rules and the
+      // next job parks on a tool the new config decides. Replacing it here,
+      // rather than in the caller, means it happens before any job exists and
+      // under the same claim that serialises starting one.
+      if (policyMatches(slug)) {
+        // Re-read before handing it back. A concurrent replacement can have
+        // killed this server and rewritten the generated config in the time
+        // since the health check, in which case policyMatches is describing
+        // the replacement while this record points at a corpse.
+        if (readLock(slug)?.pid !== existing.pid) {
+          return acquireServer(workspace, { attempt: attempt + 1 });
+        }
+        touch(slug);
+        return existing;
+      }
+
+      // A server another session acquired seconds ago has no job record yet:
+      // acquireServer touches the lock, and delegate writes the job a moment
+      // later. Killing inside that gap fails the other session's dispatch
+      // while it is creating its session, and expectPid cannot see it because
+      // the pid is the one we checked. So a freshly touched server is waited
+      // out rather than replaced, and by the next attempt either its job
+      // exists (and the refusal below is the honest answer) or it does not and
+      // the replacement is safe.
+      // Re-read rather than trusting the snapshot: another session may have
+      // acquired and touched this server since `existing` was read, and its
+      // touch is the only sign that it is about to write a job record.
+      // A server with a job on it refreshes lastActivityAt every few seconds,
+      // so the touch never goes cold and waiting would spin until the generic
+      // acquire timeout and then blame the wrong thing. An existing job is not
+      // the pre-job race; it is the case stopServer refuses in so many words.
+      if (!hasActiveJobs(workspace) && recentlyTouched(readLock(slug) ?? existing)) {
+        await new Promise((resolve) => setTimeout(resolve, ACQUIRE_RETRY_MS));
+        return acquireServer(workspace, { attempt: attempt + 1 });
+      }
+
+      const replaced = await stopServer(workspace, {
+        reason: "permission policy changed",
+        expectPid: existing.pid
+      });
+
+      if (!replaced.stopped) {
+        if (replaced.reason === "another server is already running here") {
+          // Someone else replaced it while we were deciding. Start over and
+          // take whatever is there now.
+          return acquireServer(workspace, { attempt: attempt + 1 });
+        }
+        if (replaced.reason === ACTIVE_JOBS_REASON) {
+          throw new OpencodeError(
+            `The OpenCode server for ${root} is running an older permission policy and still has active jobs, so it was not replaced. A job started on it now could stop on a tool this version decides. Wait for those jobs, or cancel them.`,
+            { code: "server_policy_stale_busy" }
+          );
+        }
+        // The record was cleared rather than a process spared: the server had
+        // already gone, or its pid belongs to something else now. Nothing is
+        // running and nothing is recorded, so starting fresh is exactly right
+        // and failing the dispatch over it would be a self-inflicted error.
+        if (CLEARED_LOCK_REASONS.has(replaced.reason)) {
+          return acquireServer(workspace, { attempt: attempt + 1 });
+        }
+
+        throw new OpencodeError(
+          `The OpenCode server for ${root} is running an older permission policy and could not be replaced: ${replaced.reason}`,
+          { code: "server_policy_stale" }
+        );
+      }
+
+      // Start over rather than falling through. Below is the reclaim path for
+      // an unhealthy server, and running it against the lock we just cleared
+      // would clear another process's `starting` claim: both would then launch
+      // a server and the later lock write would orphan the other one, live and
+      // authenticated, with nothing able to see it.
+      return acquireServer(workspace, { attempt: attempt + 1 });
     }
     // Dead, replaced, or not answering. Reclaim it, except that stopServer now
     // refuses while jobs are live, so a slow server mid-delegation survives.
@@ -656,12 +922,20 @@ export async function acquireServer(workspace, { attempt = 0 } = {}) {
   return startServer(workspace);
 }
 
-export async function stopServer(workspace, { reason = "requested", force = false } = {}) {
+export async function stopServer(workspace, { reason = "requested", force = false, expectPid } = {}) {
   const { slug } = workspace;
   const record = readLock(slug);
 
   if (!record) {
     return { stopped: false, reason: "no server recorded" };
+  }
+
+  // Compare and stop. Two sessions can both decide to replace the same server;
+  // without this the second one kills the replacement the first just started,
+  // and the first session's dispatch dies on a connection error. Naming the
+  // pid we decided about makes the second stop a no-op instead.
+  if (expectPid !== undefined && record.pid !== expectPid) {
+    return { stopped: false, reason: "another server is already running here" };
   }
 
   // Killing a server ends every session on it, so one with live jobs is spared
@@ -693,12 +967,12 @@ export async function stopServer(workspace, { reason = "requested", force = fals
         };
       }
 
-      clearLock(slug);
+      clearLockIfStill(slug, record.pid);
       return { stopped: true, pid: record.pid, reason };
     }
     // The PID belongs to something else now. Drop the stale record and leave
     // whatever owns that number alone.
-    clearLock(slug);
+    clearLockIfStill(slug, record.pid);
     return { stopped: false, reason: "stale record, pid reused" };
   }
 
