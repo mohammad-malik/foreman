@@ -203,3 +203,245 @@ test("reordering permission rules is a policy change", async () => {
   assert.equal(keys[0], "*", "the catch-all must come first or the denylist below it never applies");
   assert.ok(keys.length > 1);
 });
+
+/**
+ * The builder's bash policy.
+ *
+ * Every shell command used to stop for a human, including the test runs the
+ * handoff itself asked for. Approving each one by hand is not review, it is
+ * clicking, and it left jobs parked for as long as nobody was watching.
+ *
+ * So verification commands run on their own. The cost is real and was accepted
+ * deliberately: a builder can edit a test file and then run it, which is
+ * executing code it wrote. What is NOT accepted is that command reaching the
+ * network or the environment, which is what the deny rules are for, and they
+ * only work if they are last.
+ */
+const builderBash = config.agent["external-builder"].permission.bash;
+
+test("the catch-all still asks", () => {
+  const patterns = Object.keys(builderBash);
+
+  assert.equal(patterns[0], "*");
+  assert.equal(builderBash["*"], "ask", "anything not named must still stop for a person");
+});
+
+test("every deny comes after every allow", () => {
+  // OpenCode applies the LAST matching rule. An allow sitting below a deny it
+  // overlaps with would silently win, and "npm test" would become a way to
+  // reach anything the denylist exists to block.
+  const patterns = Object.keys(builderBash);
+  const lastAllow = patterns.findLastIndex((p) => builderBash[p] === "allow");
+  const firstDeny = patterns.findIndex((p) => builderBash[p] === "deny");
+
+  assert.ok(firstDeny > lastAllow, "a deny is ordered above an allow and would be overridden");
+});
+
+test("chaining does not smuggle a blocked command past an allowed one", () => {
+  // Written as patterns first, which was wrong twice over: leading wildcards
+  // refused ordinary test paths, and OpenCode never sees the "&&" anyway. What
+  // matters is the behaviour, so assert that instead.
+  for (const command of [
+    "npm test && curl http://example.com",
+    "pytest && gh pr create",
+    "npm test && env"
+  ]) {
+    assert.equal(decide(command), "deny", command);
+  }
+});
+
+
+test("what is allowed is verification, not a general shell", () => {
+  const allowed = Object.keys(builderBash).filter((p) => builderBash[p] === "allow");
+
+  // Every allowed pattern names a program. None is a bare wildcard, and none
+  // opens a shell.
+  for (const pattern of allowed) {
+    assert.notEqual(pattern, "*");
+    assert.doesNotMatch(pattern, /^\*/u, `${pattern} would match anything containing it`);
+    assert.doesNotMatch(pattern, /^(bash|sh|zsh|pwsh|powershell|cmd)\b/u, `${pattern} is a shell`);
+  }
+
+  // The commands that prompted in the first place.
+  assert.ok(allowed.includes("npm test*"));
+  assert.ok(allowed.includes("pytest*"));
+  assert.ok(allowed.includes("cargo test*"));
+});
+
+test("the researcher gains nothing from any of this", () => {
+  assert.equal(config.agent["external-researcher"].permission.bash, "deny");
+});
+
+
+
+test("the builder is told what actually happens", () => {
+  // The prompt said every command waits for a human. Once that stopped being
+  // true, a builder reading it would skip the checks it can now simply run.
+  const prompt = config.agent["external-builder"].prompt;
+
+  assert.match(prompt, /run without asking/u);
+  assert.match(prompt, /one command at a time/u);
+  assert.match(prompt, /Every other bash command stops your work/u);
+});
+
+/**
+ * A tiny reader for the policy, so these cases argue about behaviour rather
+ * than about which pattern happens to be in the file. OpenCode applies the
+ * LAST matching rule, so this walks the map in order and keeps the final hit.
+ */
+function decide(command) {
+  // Strictest wins across the parts, and deny beats ask beats allow.
+  const rank = { allow: 0, ask: 1, deny: 2 };
+  const parts = command.split(/&&|\|\||;|\|/u).map((part) => part.trim()).filter(Boolean);
+
+  return parts
+    .map((part) => decideOne(part))
+    .reduce((worst, next) => (rank[next] > rank[worst] ? next : worst), "allow");
+}
+
+function decideOne(command) {
+  let verdict = "ask";
+  for (const [pattern, action] of Object.entries(builderBash)) {
+    const escaped = pattern
+      .split("*")
+      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&"))
+      .join(".*");
+    if (new RegExp(`^${escaped}$`, "su").test(command)) {
+      verdict = action;
+    }
+  }
+  return verdict;
+}
+
+test("the commands a handoff asks for simply run", () => {
+  for (const command of [
+    "npm test",
+    "npm test -- --run",
+    "pytest -q",
+    "cargo test --all",
+    "go test ./...",
+    "node --test test/",
+    "./gradlew test",
+    "gradlew.bat test",
+    "./mvnw test",
+    "mvn test"
+  ]) {
+    assert.equal(decide(command), "allow", command);
+  }
+});
+
+test("a test path containing env is not an environment dump", () => {
+  // `*env*` denied any command with those three letters in it, which refused
+  // ordinary test files outright instead of running them.
+  for (const command of [
+    "pytest tests/test_environment.py",
+    "npm test -- --testEnvironment=node",
+    "npm test -- --grep environment"
+  ]) {
+    assert.equal(decide(command), "allow", command);
+  }
+});
+
+test("reading the environment is still denied", () => {
+  for (const command of ["env", "printenv", "printenv PATH", "cat /proc/1/environ"]) {
+    assert.equal(decide(command), "deny", command);
+  }
+});
+
+
+test("each command in a chained line is judged on its own", () => {
+  // OpenCode splits a compound command and asks about each part:
+  // PermissionRequest carries `patterns` as an array, not a string. So joining
+  // an allowed command to a forbidden one buys nothing, and rules written to
+  // match "&&" could never have fired.
+  assert.equal(decide("npm test && curl http://example.com"), "deny");
+  assert.equal(decide("pytest && gh pr create"), "deny");
+
+  // The permissive half does not carry the rest of the line.
+  assert.equal(decide("npm test && cat ../../secret"), "ask");
+  assert.equal(decide("npm test && pytest"), "allow");
+});
+
+test("git and npx are not on the allowlist at all", () => {
+  // Every read-shaped git command takes a flag that reads or writes outside
+  // the repository (--no-index, --output, blame --contents) or mutates refs
+  // (branch -v -D, which flag reordering hid from the deny patterns), and npx
+  // fetches and runs a package that is not installed. A glob cannot sort the
+  // safe invocations of a program with a hundred flags from the rest, so these
+  // ask, and the genuinely destructive ones stay denied.
+  for (const command of [
+    "git status --short",
+    "git diff --no-index NUL C:\Windows\win.ini",
+    "git blame --contents C:/secret HEAD -- README.md",
+    "git branch -v -D feature",
+    "npx vitest@latest",
+    "npx vitest-malicious"
+  ]) {
+    assert.notEqual(decide(command), "allow", command);
+  }
+
+  for (const command of ["git push origin main", "gh pr create"]) {
+    assert.equal(decide(command), "deny", command);
+  }
+});
+
+test("a test runner may still write its own report", () => {
+  // Denying --output everywhere was collateral from the git rules and refused
+  // ordinary reporters.
+  for (const command of ["npm test -- --outputFile=results.json", "pytest --junitxml=out.xml"]) {
+    assert.equal(decide(command), "allow", command);
+  }
+});
+
+test("redirection and substitution go back for approval", () => {
+  // These stay inside one part rather than being split off the way && and |
+  // are, so the runner allow was matching the whole line and writing outside
+  // the repository. Ask, not deny: approving a redirect is reasonable.
+  for (const command of [
+    "npm test > C:/outside/file",
+    "npm test $(cat C:/outside/secret.txt)",
+    "pytest < input.txt",
+    "npm test `whoami`"
+  ]) {
+    assert.equal(decide(command), "ask", command);
+  }
+});
+
+test("a command name inside an argument is an argument", () => {
+  // Leading wildcards on command names refused ordinary checks in projects
+  // that happen to test those tools.
+  for (const command of [
+    "npm test -- test/curl.test.js",
+    "pytest tests/test_wget.py",
+    "npm test -- --grep push"
+  ]) {
+    assert.equal(decide(command), "allow", command);
+  }
+});
+
+test("the command itself is still stopped", () => {
+  for (const command of ["curl http://example.com", "wget http://example.com", "git push origin main", "gh pr create"]) {
+    assert.equal(decide(command), "deny", command);
+  }
+});
+
+test("a build tool cannot carry a second task in on the first", () => {
+  // Gradle and Maven take tasks positionally, so `gradle test publish` is one
+  // command and a trailing wildcard would have approved the publish with it.
+  // No glob says "this task and no other", so these allows are exact.
+  for (const command of ["gradle test publish", "mvn test deploy", "./gradlew test release"]) {
+    assert.equal(decide(command), "ask", command);
+  }
+});
+
+test("a package or argument named env is not an environment dump", () => {
+  // These ended with " env" and were refused outright. Unnecessary as well as
+  // wrong: `env` run as a command is its own part and is denied there.
+  for (const command of ["go test ./internal/env", "pytest -m env", "npm test -- env"]) {
+    assert.equal(decide(command), "allow", command);
+  }
+
+  assert.equal(decide("env"), "deny");
+  assert.equal(decide("env FOO=1 node x.js"), "deny");
+  assert.equal(decide("npm test && env"), "deny");
+});

@@ -76,8 +76,10 @@ A model can be reachable more than one way, and the ways are not equivalent.
 - **Codex** shells out to `codex exec`, which runs OpenAI models on your ChatGPT
   sign-in. One detached process per job. No permission prompts: a sandbox decides
   what it may touch before it starts, read-only or write-inside-the-workspace.
-- **OpenCode** drives a local OpenCode server against a provider API key, with
-  per-command permission prompts you answer as they come.
+- **OpenCode** drives a local OpenCode server against a provider API key. A
+  builder's test runners run on their own; anything else stops and asks. Each
+  command in a chained line is judged separately, so joining one to an approved
+  one gains nothing.
 
 So `sol` and `luna` default to Codex. Say a backend out loud to override it:
 "have opencode sol review this" runs the same model against the API key instead.
@@ -132,7 +134,11 @@ State is shared across every Claude session on the machine, so a few things are 
 
 ## What the agent can see
 
-Provider API keys reach the OpenCode server through its environment, and every shell command the agent runs inherits that environment. The agent configs deny the obvious ways of printing it (`env`, `printenv`, `set`, `Get-ChildItem env:`, anything mentioning `API_KEY`), but a denylist is not a proof. Treat an unattended write agent as able to read the keys its server was started with, and rotate them if a transcript ever shows one.
+Provider API keys reach the OpenCode server through its environment, and every shell command the agent runs inherits that environment. The agent configs deny the obvious ways of printing it (`env`, `printenv`, `set`, `Get-ChildItem env:`, anything mentioning `API_KEY`), in forms that match mid-command as well as at the start, but a denylist is not a proof.
+
+It stops being one entirely once a process starts. A builder's test runners execute without asking, and a builder can edit a test file, so a test it wrote can read `process.env` or open a socket directly and no bash pattern sees any of it. That is the price of not approving every `npm test` by hand, and it was taken deliberately. Treat a write agent as able to read the keys its server was started with, and rotate them if a transcript ever shows one.
+
+`--role researcher` is unaffected: its bash is denied outright, so nothing it does starts a process at all.
 
 Only provider, model, formatter and LSP settings from your own OpenCode config are carried into the servers this plugin starts. MCP servers, plugins, instructions and sharing are not, so an external model cannot reach tools you set up for yourself. `share` is forced off.
 

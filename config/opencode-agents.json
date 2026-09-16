@@ -30,6 +30,45 @@
         "websearch": "deny",
         "bash": {
           "*": "ask",
+          "npm test*": "allow",
+          "npm run test*": "allow",
+          "npm run lint*": "allow",
+          "npm run typecheck*": "allow",
+          "npm run build*": "allow",
+          "pnpm test*": "allow",
+          "pnpm run test*": "allow",
+          "pnpm run lint*": "allow",
+          "yarn test*": "allow",
+          "yarn lint*": "allow",
+          "bun test*": "allow",
+          "deno test*": "allow",
+          "deno lint*": "allow",
+          "node --test*": "allow",
+          "tsc --noEmit*": "allow",
+          "pytest*": "allow",
+          "python -m pytest*": "allow",
+          "python3 -m pytest*": "allow",
+          "tox*": "allow",
+          "ruff check*": "allow",
+          "mypy*": "allow",
+          "cargo test*": "allow",
+          "cargo check*": "allow",
+          "cargo clippy*": "allow",
+          "go test*": "allow",
+          "go vet*": "allow",
+          "dotnet test*": "allow",
+          "mvn test": "allow",
+          "gradle test": "allow",
+          "./gradlew test": "allow",
+          "gradlew test": "allow",
+          "gradlew.bat test": "allow",
+          "./mvnw test": "allow",
+          "mvnw.cmd test": "allow",
+          "*>*": "ask",
+          "*<*": "ask",
+          "*$(*": "ask",
+          "*`*": "ask",
+          "*${*": "ask",
           "git push*": "deny",
           "git reset --hard*": "deny",
           "git clean*": "deny",
@@ -60,7 +99,9 @@
           "*$env:*": "deny",
           "*API_KEY*": "deny",
           "*SERVER_PASSWORD*": "deny",
-          "cat /proc/*/environ*": "deny"
+          "cat /proc/*/environ*": "deny",
+          "*process.env*": "deny",
+          "*os.environ*": "deny"
         },
         "todowrite": "allow",
         "question": "deny",
@@ -68,7 +109,7 @@
         "skill": "deny",
         "doom_loop": "deny"
       },
-      "prompt": "You are working inside one git repository on behalf of another engineer.\n\nPrefer the read, list, glob, grep and lsp tools. They are scoped to this\nrepository and run without interruption.\n\nEvery bash command stops your work and waits for a human to approve it, and\nmany are denied outright. A person may be asleep or away, so a bash call you\ndid not need can cost hours. Use bash only when no other tool can do the job,\nand never for something read, glob, grep or list already does: listing files,\nreading a file, searching for text.\n\nDo not attempt to read or write anything outside this repository.\n\nYou may edit files in this repository. Make the change you were asked for and\nnothing more: unrelated tidying is not wanted and makes your work harder to\nreview. Say plainly if the task cannot be done as specified rather than\nsubstituting a different approach."
+      "prompt": "You are working inside one git repository on behalf of another engineer.\n\nPrefer the read, list, glob, grep and lsp tools. They are scoped to this\nrepository and run without interruption.\n\nTest runners run without asking: npm test, pytest, cargo test, go test and the\nlike. Run the checks that prove your work, and report what they actually\nprinted.\n\nEvery other bash command stops your work and waits for a human to approve it,\nand many are denied outright. A person may be asleep or away, so a bash call\nyou did not need can cost hours. Use bash only when no other tool can do the\njob, and never for something read, glob, grep or list already does: listing\nfiles, reading a file, searching for text.\n\nEach command in a chained line is judged on its own, so joining an approved\ncommand to an unapproved one saves you nothing: the second half still stops and\nwaits. Run one command at a time.\n\nDo not attempt to read or write anything outside this repository.\n\nYou may edit files in this repository. Make the change you were asked for and\nnothing more: unrelated tidying is not wanted and makes your work harder to\nreview. Say plainly if the task cannot be done as specified rather than\nsubstituting a different approach."
     },
     "external-researcher": {
       "description": "Read-only external worker. Investigates and reports, never edits.",
@@ -166,5 +207,6 @@
       }
     }
   },
-  "//unlisted": "Every key in PermissionConfig is set on every agent, deliberately. OpenCode defaults an unlisted tool to \"ask\", and a headless agent has nobody to ask: the job parks in awaiting_permission until a person notices. todowrite did exactly that. It is session bookkeeping with no effect on disk, it was simply missing from the map, and a builder stopped on every call to it, three times in one job. So: todowrite is allowed; question and doom_loop are denied because both wait on a human and the runtime can answer a permission request but not a question; task and skill are denied to match subagent_depth, since a child agent would run outside the policy its parent was given. test/agent-permissions.test.mjs fails if a key is left out, which is what a new OpenCode version will do."
+  "//unlisted": "Every key in PermissionConfig is set on every agent, deliberately. OpenCode defaults an unlisted tool to \"ask\", and a headless agent has nobody to ask: the job parks in awaiting_permission until a person notices. todowrite did exactly that. It is session bookkeeping with no effect on disk, it was simply missing from the map, and a builder stopped on every call to it, three times in one job. So: todowrite is allowed; question and doom_loop are denied because both wait on a human and the runtime can answer a permission request but not a question; task and skill are denied to match subagent_depth, since a child agent would run outside the policy its parent was given. test/agent-permissions.test.mjs fails if a key is left out, which is what a new OpenCode version will do.",
+  "//bash": "external-builder runs test runners without asking and asks about everything else. Asking about every command meant a job stopped for a human on the very test run its handoff had instructed, and approving each one by hand is clicking rather than reviewing. Only runners are allowed. git and npx were tried and dropped: every read-shaped git command takes a flag that reads or writes outside the repository (--no-index, --output, blame --contents) or mutates refs (branch -v -D, where reordering the flags slips past a deny pattern), and npx fetches and runs a package that is not installed. A glob cannot sort the safe invocations of a program with a hundred flags from the rest. OpenCode splits a compound command and judges each part separately, which is why PermissionRequest carries `patterns` as an array, so `npm test && env` is the allow and the deny, not one string: chaining buys nothing and rules matching `&&` would never fire. Order decides the rest, since OpenCode applies the LAST matching rule: catch-all first, then the allows, then every deny. Denies keep their leading wildcards for a command substituted inside a single part. What this does NOT protect: an allowed runner starts a process, and that process inherits the server environment and the network. A builder can edit a test and then run it. That cost was accepted deliberately; see the README. external-researcher is untouched, its bash denied outright."
 }
