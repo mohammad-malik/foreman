@@ -63,6 +63,7 @@ That allows dispatch, not node in general, and it removes no gate: the repositor
 | `sol` | sol, gpt 5.6 sol, gpt 5.6 | Codex | standard |
 | `luna` | luna, gpt 5.6 luna, moon | Codex | standard |
 | `astra` | astra, gpt-6-astra, gpt 6 | Codex | GPT-6, live |
+| `union` | union, union alpha, union alpha free | OpenCode | standard |
 
 Spoken names live in `config/routes.default.json`. Adding a model, or another
 way of saying one, is an edit to that file: no code knows what "kimi" means.

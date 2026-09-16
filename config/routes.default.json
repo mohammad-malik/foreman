@@ -1,23 +1,28 @@
 {
   "version": 4,
-
   "//": "Spoken names are DATA, not logic. Nothing in the runtime or the skills knows that 'kimi' or 'sol' means anything: `resolve` matches a phrase against these lists. Adding a model, a backend, or another way of saying one, is an edit to this file and nothing else. Speed words (fast, quick, cheap, standard, full) are handled by resolve and are not listed here, so 'fast kimi' needs no entry of its own.",
-
   "//backends": "Two ways to actually run a model. `opencode` drives a local OpenCode server, which is how the non-OpenAI models are reachable. `codex` shells out to the Codex CLI, which runs OpenAI models on the ChatGPT sign-in rather than through a paid API key. Each alias names the backend it should use by default, and saying a backend word out loud overrides it: 'opencode sol' forces the OpenCode path.",
-
   "backends": {
     "codex": {
       "description": "The Codex CLI (codex exec) on your ChatGPT sign-in.",
-      "spoken": ["codex", "via codex", "codex cli", "through codex"]
+      "spoken": [
+        "codex",
+        "via codex",
+        "codex cli",
+        "through codex"
+      ]
     },
     "opencode": {
       "description": "A local OpenCode server.",
-      "spoken": ["opencode", "open code", "via opencode", "through opencode"]
+      "spoken": [
+        "opencode",
+        "open code",
+        "via opencode",
+        "through opencode"
+      ]
     }
   },
-
   "//retired": "Names that used to work and must now refuse rather than resolve. A retired name is not the same as an unknown one: 'glm 5.2' would otherwise match the `glm` alias by containment and quietly dispatch to GLM 5.3 Flash, which is exactly the silent substitution this plugin exists to prevent. The value is the sentence the user sees.",
-
   "retired": {
     "glm 5.2": "GLM now means GLM 5.3 Flash. 5.2 is no longer routed. Say \"glm\" for 5.3 Flash.",
     "glm-5.2": "GLM now means GLM 5.3 Flash. 5.2 is no longer routed. Say \"glm\" for 5.3 Flash.",
@@ -26,15 +31,23 @@
     "glm 5.1": "Only GLM 5.3 Flash is routed. Say \"glm\".",
     "glm 5": "Only GLM 5.3 Flash is routed. Say \"glm\"."
   },
-
   "aliases": {
     "kimi": {
       "description": "Moonshot Kimi K3. General purpose primary worker.",
-      "spoken": ["kimi", "kimi k3", "kimi-k3", "k3", "moonshot"],
+      "spoken": [
+        "kimi",
+        "kimi k3",
+        "kimi-k3",
+        "k3",
+        "moonshot"
+      ],
       "defaultBackend": "opencode",
       "backends": {
         "opencode": {
-          "standard": { "providerID": "opencode", "modelID": "kimi-k3" },
+          "standard": {
+            "providerID": "opencode",
+            "modelID": "kimi-k3"
+          },
           "fast": {
             "providerID": "fireworks-ai",
             "modelID": "accounts/fireworks/routers/kimi-k3-fast"
@@ -42,7 +55,6 @@
         }
       }
     },
-
     "glm": {
       "description": "GLM 5.3 Flash. The only routed GLM: cheap, quick, good for narrow mechanical work.",
       "//": "Both tiers point at the same model on purpose. GLM has exactly one routed model, so 'glm' and 'fast glm' are the same request and there is no substitution worth reporting. 5.2 and plain 5.3 are retired above, not merely absent.",
@@ -73,21 +85,32 @@
         }
       }
     },
-
     "sol": {
       "description": "GPT-5.6 Sol. Runs through Codex on the ChatGPT sign-in unless you say opencode.",
-      "spoken": ["sol", "gpt 5.6 sol", "gpt-5.6-sol", "gpt5.6 sol", "gpt 5.6", "gpt-5.6", "gpt5.6"],
+      "spoken": [
+        "sol",
+        "gpt 5.6 sol",
+        "gpt-5.6-sol",
+        "gpt5.6 sol",
+        "gpt 5.6",
+        "gpt-5.6",
+        "gpt5.6"
+      ],
       "defaultBackend": "codex",
       "backends": {
         "codex": {
-          "standard": { "modelID": "gpt-5.6-sol" }
+          "standard": {
+            "modelID": "gpt-5.6-sol"
+          }
         },
         "opencode": {
-          "standard": { "providerID": "opencode", "modelID": "gpt-5.6-sol" }
+          "standard": {
+            "providerID": "opencode",
+            "modelID": "gpt-5.6-sol"
+          }
         }
       }
     },
-
     "luna": {
       "description": "GPT-5.6 Luna. Runs through Codex on the ChatGPT sign-in unless you say opencode.",
       "spoken": [
@@ -101,36 +124,79 @@
       "defaultBackend": "codex",
       "backends": {
         "codex": {
-          "standard": { "modelID": "gpt-5.6-luna" }
+          "standard": {
+            "modelID": "gpt-5.6-luna"
+          }
         },
         "opencode": {
-          "standard": { "providerID": "opencode", "modelID": "gpt-5.6-luna" }
+          "standard": {
+            "providerID": "opencode",
+            "modelID": "gpt-5.6-luna"
+          }
         }
       }
     },
-
     "astra": {
       "description": "GPT-6, shipping as gpt-6-astra. Live on Codex now, so it runs on the ChatGPT sign-in like sol and luna.",
-
       "//backend": "This briefly defaulted to OpenCode, because Codex on a ChatGPT account answered a gpt-6-astra request with a 400 saying the model was not supported for that account type. OpenAI has since enabled it: the local model cache lists gpt-6-astra and a real `codex exec -m gpt-6-astra` returns a completed turn. The OpenCode candidates stay pending, so if it appears there too, saying \"opencode astra\" reaches it.",
-
-      "spoken": ["astra", "gpt-6-astra", "gpt6 astra", "gpt 6 astra", "gpt-6", "gpt6", "gpt 6"],
+      "spoken": [
+        "astra",
+        "gpt-6-astra",
+        "gpt6 astra",
+        "gpt 6 astra",
+        "gpt-6",
+        "gpt6",
+        "gpt 6"
+      ],
       "reserved": true,
       "defaultBackend": "codex",
-      "watchPatterns": ["gpt-6", "astra"],
+      "watchPatterns": [
+        "gpt-6",
+        "astra"
+      ],
       "backends": {},
-
       "//pendingBackends": "Candidate ids per backend, tried in order, promoted to real routes only when that backend actually offers one. So the day GPT-6 lands, 'have astra do X' works with no edit to this file, and until then astra refuses rather than guessing.",
-
       "pendingBackends": {
         "codex": {
-          "standard": [{ "modelID": "gpt-6-astra" }, { "modelID": "gpt-6" }]
+          "standard": [
+            {
+              "modelID": "gpt-6-astra"
+            },
+            {
+              "modelID": "gpt-6"
+            }
+          ]
         },
         "opencode": {
           "standard": [
-            { "providerID": "opencode", "modelID": "gpt-6-astra" },
-            { "providerID": "opencode", "modelID": "gpt-6" }
+            {
+              "providerID": "opencode",
+              "modelID": "gpt-6-astra"
+            },
+            {
+              "providerID": "opencode",
+              "modelID": "gpt-6"
+            }
           ]
+        }
+      }
+    },
+    "union": {
+      "description": "Union Alpha, free on OpenCode.",
+      "spoken": [
+        "union alpha free",
+        "union-alpha-free",
+        "union alpha",
+        "union-alpha",
+        "union"
+      ],
+      "defaultBackend": "opencode",
+      "backends": {
+        "opencode": {
+          "standard": {
+            "providerID": "opencode",
+            "modelID": "union-alpha"
+          }
         }
       }
     }
