@@ -373,3 +373,15 @@ export function describeElapsed(job) {
   const minutes = Math.floor(seconds / 60);
   return `${minutes}m ${seconds % 60}s`;
 }
+
+/**
+ * The execution path a recorded job ran on.
+ *
+ * Records written before backends could name a provider carry neither field on
+ * the OpenCode path, and a job dispatched to OpenRouter carries a `backend` of
+ * "openrouter" whose path is "opencode". Both have to read as OpenCode here, or
+ * result and reconcile would look for a Codex process that never existed.
+ */
+export function jobRunsOn(job) {
+  return job?.runsOn ?? job?.backend ?? "opencode";
+}

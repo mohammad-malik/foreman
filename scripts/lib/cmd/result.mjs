@@ -27,7 +27,8 @@ import {
   markAwaiting,
   markPolled,
   TERMINAL_STATUSES,
-  updateJob
+  updateJob,
+  jobRunsOn
 } from "../jobs.mjs";
 import { listWorkspaces } from "../registry.mjs";
 import { bullet, heading, keyValue, oneLine, untrustedBlock, untrustedInline } from "../render.mjs";
@@ -74,7 +75,7 @@ export async function collectResult(slug, jobID, { timeout } = {}) {
     throw new Error(`No job ${jobID} in this workspace.`);
   }
 
-  if (job.backend === "codex") {
+  if (jobRunsOn(job) === "codex") {
     return collectCodexResult(job);
   }
 
@@ -288,9 +289,15 @@ export function renderResult(job) {
   lines.push(
     keyValue([
       ["model", job.qualified ?? `${job.alias}.${job.route}`],
+      // Named when it is not the path it ran on, which is exactly when it is
+      // worth saying: an OpenRouter job and an OpenCode one are both served by
+      // the same local server and are otherwise indistinguishable in a report.
+      ...(job.backend && job.backend !== jobRunsOn(job)
+        ? [["backend", `${job.backend} (on ${jobRunsOn(job)})`]]
+        : []),
       ["agent", `${job.agent} (${job.access})`],
       ["workspace", job.workspaceRoot],
-      ...(job.backend === "codex"
+      ...(jobRunsOn(job) === "codex"
         ? [
             ["sandbox", job.sandbox ?? "unknown"],
             // The thread id is what `codex resume` takes, so it is the one

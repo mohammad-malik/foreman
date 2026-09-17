@@ -22,7 +22,7 @@ import path from "node:path";
  * handoff does.
  */
 export function namedPaths(task) {
-  const text = String(task ?? "");
+  const text = withoutDiffs(String(task ?? ""));
   const found = new Map();
 
   // A path-like run: at least one separator, ending in a short alphanumeric
@@ -49,6 +49,50 @@ export function namedPaths(task) {
   }
 
   return [...found.keys()];
+}
+
+/**
+ * Blank out unified diff regions.
+ *
+ * The delegating skill tells the caller to paste a diff into the handoff, since
+ * an OpenCode researcher cannot run `git diff` itself. A plain `git show` then
+ * writes every file twice, as `a/README.md` and `b/README.md`, and neither
+ * exists: one review handoff was refused for naming 18 paths that were all the
+ * same nine real files. Those lines are quoted evidence, not an instruction to
+ * open anything, so they are not scanned at all.
+ *
+ * The region ends at the first line back at the left margin that is not diff
+ * syntax, so prose written after a diff is still checked.
+ */
+function withoutDiffs(text) {
+  const lines = text.split(/\r?\n/u);
+  const kept = [];
+  let inDiff = false;
+
+  const header =
+    /^(?:diff --git |index [0-9a-f]+\.\.|--- |\+\+\+ |@@ |new file mode |deleted file mode |old mode |new mode |similarity index |rename (?:from|to) |copy (?:from|to) |Binary files )/u;
+
+  for (const line of lines) {
+    if (header.test(line)) {
+      inDiff = true;
+      kept.push("");
+      continue;
+    }
+
+    if (inDiff) {
+      // Added, removed and context lines, the "\ No newline" marker, and the
+      // blank lines between hunks.
+      if (line === "" || /^[+\- \\]/u.test(line)) {
+        kept.push("");
+        continue;
+      }
+      inDiff = false;
+    }
+
+    kept.push(line);
+  }
+
+  return kept.join("\n");
 }
 
 /**

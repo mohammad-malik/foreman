@@ -30,7 +30,9 @@ import {
   readCodexJob,
   SILENT_GRACE_MS
 } from "./codex-job.mjs";
-import { ACTIVE_STATUSES, elapsedMs, listJobs, updateJob } from "./jobs.mjs";
+import { ACTIVE_STATUSES, elapsedMs, listJobs, updateJob,
+  jobRunsOn
+} from "./jobs.mjs";
 import { OpencodeApi } from "./opencode-api.mjs";
 import { currentServer } from "./servers.mjs";
 
@@ -74,7 +76,7 @@ export async function reconcileWorkspace(workspace) {
     // A Codex job has no server to lose. Its process either exists or it does
     // not, and once it is gone the event log is the whole story, so this is
     // where a background Codex job reaches a terminal state.
-    if (job.backend === "codex") {
+    if (jobRunsOn(job) === "codex") {
       let state = readCodexJob(job);
 
       // A live-looking PID that is not this job's codex is a recycled number,
@@ -159,7 +161,7 @@ export async function reconcileWorkspace(workspace) {
  * what happened, for the error message.
  */
 async function stopWork(job, server) {
-  if (job.backend === "codex") {
+  if (jobRunsOn(job) === "codex") {
     const outcome = cancelCodexJob(job);
     return outcome.killed
       ? "The codex process was stopped."

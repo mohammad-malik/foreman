@@ -79,3 +79,52 @@ test("a path escaping the workspace is not reported as missing", () => {
 
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test("a pasted diff is evidence, not a list of files to open", () => {
+  // The delegating skill tells the caller to paste a diff, because an OpenCode
+  // researcher cannot run `git diff` itself. A plain `git show` writes every
+  // file twice, as a/README.md and b/README.md, and neither exists: a review
+  // handoff was refused for naming 18 paths that were the same nine files.
+  const task = [
+    "Review this change, then check scripts/lib/routes.mjs.",
+    "",
+    "diff --git a/README.md b/README.md",
+    "index 1111111..2222222 100644",
+    "--- a/README.md",
+    "+++ b/README.md",
+    "@@ -1,3 +1,4 @@",
+    " context mentioning src/context-only.ts",
+    "-removed src/gone.ts",
+    "+added src/ghost.ts",
+    "\ No newline at end of file",
+    "",
+    "That is the end. Also read test/routes.test.mjs."
+  ].join("\n");
+
+  // Only the prose is scanned, and prose after the diff still is.
+  assert.deepEqual(namedPaths(task), ["scripts/lib/routes.mjs", "test/routes.test.mjs"]);
+});
+
+test("a diff with no prefixes is skipped too", () => {
+  const task = [
+    "Check config/routes.default.json.",
+    "diff --git config/routes.default.json config/routes.default.json",
+    "--- config/routes.default.json",
+    "+++ config/routes.default.json",
+    "@@ -1 +1 @@",
+    "-  old line naming src/vanished.ts",
+    "+  new line"
+  ].join("\n");
+
+  assert.deepEqual(namedPaths(task), ["config/routes.default.json"]);
+});
+
+test("a hyphenated sentence after a diff is not swallowed", () => {
+  // The region has to end, or every path named after a pasted diff would go
+  // unchecked and the guard would quietly stop working.
+  const task = ["diff --git a/x.md b/x.md", "@@ -1 +1 @@", "+one", "", "Now edit src/real.ts."].join(
+    "\n"
+  );
+
+  assert.deepEqual(namedPaths(task), ["src/real.ts"]);
+});

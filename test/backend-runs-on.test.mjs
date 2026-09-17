@@ -87,3 +87,19 @@ test("the existing backends are untouched", () => {
   // astra is a reserved alias and needs the live inventory to promote, so it
   // is exercised through the CLI rather than here.
 });
+
+test("a recorded job knows which path it ran on", async () => {
+  // The OpenCode branch recorded no backend at all, so status and result could
+  // not tell an OpenRouter job from an OpenCode one. Old records have neither
+  // field and must still read as OpenCode, or result would go looking for a
+  // Codex process that never existed.
+  const { jobRunsOn } = await import("../scripts/lib/jobs.mjs");
+
+  assert.equal(jobRunsOn({ backend: "openrouter", runsOn: "opencode" }), "opencode");
+  assert.equal(jobRunsOn({ backend: "codex", runsOn: "codex" }), "codex");
+
+  // Written before this existed.
+  assert.equal(jobRunsOn({ backend: "codex" }), "codex");
+  assert.equal(jobRunsOn({}), "opencode");
+  assert.equal(jobRunsOn(undefined), "opencode");
+});

@@ -20,7 +20,8 @@ import {
   markReported,
   markResumed,
   TERMINAL_STATUSES,
-  updateJob
+  updateJob,
+  jobRunsOn
 } from "../jobs.mjs";
 import { listWorkspaces } from "../registry.mjs";
 import { reconcileAll } from "../reconcile.mjs";
@@ -288,7 +289,7 @@ export async function cancel(jobID) {
   const lines = [];
   let stoppedCleanly = false;
 
-  if (job.backend === "codex") {
+  if (jobRunsOn(job) === "codex") {
     // The process tree, not just the process: codex runs its shell commands as
     // children, and signalling only the parent leaves one of them mid-write.
     const killed = cancelCodexJob(job);

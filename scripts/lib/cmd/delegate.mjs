@@ -266,6 +266,10 @@ export async function delegate({
   // server in the moment between creating the session and writing it down.
   let job = createJob(workspace, {
     task,
+    backend: resolved.backend,
+    // Both, because they differ: openrouter is a provider reached through the
+    // OpenCode server. Later commands branch on runsOn and report backend.
+    runsOn: resolved.runsOn,
     alias: model,
     route,
     providerID: resolved.providerID,
@@ -439,6 +443,7 @@ async function dispatchCodex({
   const job = createJob(workspace, {
     task,
     backend: "codex",
+    runsOn: "codex",
     alias: model,
     route,
     providerID: null,
