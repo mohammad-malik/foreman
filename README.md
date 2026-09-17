@@ -63,7 +63,7 @@ That allows dispatch, not node in general, and it removes no gate: the repositor
 | `sol` | sol, gpt 5.6 sol, gpt 5.6 | Codex | standard |
 | `luna` | luna, gpt 5.6 luna, moon | Codex | standard |
 | `astra` | astra, gpt-6-astra, gpt 6 | Codex | GPT-6, live |
-| `union` | union, union alpha, union alpha free | OpenCode | standard |
+| `union` | union, union alpha, union alpha free | OpenCode, or OpenRouter if you say so | standard |
 
 Spoken names live in `config/routes.default.json`. Adding a model, or another
 way of saying one, is an edit to that file: no code knows what "kimi" means.
@@ -84,6 +84,13 @@ A model can be reachable more than one way, and the ways are not equivalent.
 
 So `sol` and `luna` default to Codex. Say a backend out loud to override it:
 "have opencode sol review this" runs the same model against the API key instead.
+
+A backend can also name a provider rather than a way of running. `openrouter`
+reaches OpenRouter through the same local OpenCode server, so "openrouter union"
+swaps the provider and changes nothing else: same server, same agent config,
+same permission policy. Say nothing, or say `opencode`, and you get the OpenCode
+copy. A backend declares this with `runsOn` in the route table, and code that
+decides how a job runs reads that rather than the backend's name.
 Which backend ran is recorded on the job and printed in the report, never
 inferred afterwards.
 

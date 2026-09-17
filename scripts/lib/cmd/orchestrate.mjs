@@ -62,6 +62,11 @@ export function resolve(phrase) {
         ok: true,
         model: match.alias,
         backend: match.backend,
+        // Which execution path that backend uses. They differ when a backend
+        // names a provider rather than a way of running: openrouter runs on
+        // the OpenCode server, and a caller deciding what to expect (permission
+        // prompts, a sandbox) needs the path, not the name.
+        runsOn: match.runsOn ?? match.backend,
         route: match.route,
         qualified: match.qualified,
         providerID: match.providerID,

@@ -1,7 +1,7 @@
 {
   "version": 4,
   "//": "Spoken names are DATA, not logic. Nothing in the runtime or the skills knows that 'kimi' or 'sol' means anything: `resolve` matches a phrase against these lists. Adding a model, a backend, or another way of saying one, is an edit to this file and nothing else. Speed words (fast, quick, cheap, standard, full) are handled by resolve and are not listed here, so 'fast kimi' needs no entry of its own.",
-  "//backends": "Two ways to actually run a model. `opencode` drives a local OpenCode server, which is how the non-OpenAI models are reachable. `codex` shells out to the Codex CLI, which runs OpenAI models on the ChatGPT sign-in rather than through a paid API key. Each alias names the backend it should use by default, and saying a backend word out loud overrides it: 'opencode sol' forces the OpenCode path.",
+  "//backends": "Two ways to actually run a model. `opencode` drives a local OpenCode server, which is how the non-OpenAI models are reachable. `codex` shells out to the Codex CLI, which runs OpenAI models on the ChatGPT sign-in rather than through a paid API key. Each alias names the backend it should use by default, and saying a backend word out loud overrides it: 'opencode sol' forces the OpenCode path. A backend also carries runsOn: which execution path it uses, which is not always itself. openrouter runsOn opencode, because OpenRouter is a provider reached through the same local server rather than a second way of running a job. Saying \"openrouter\" therefore swaps the provider and changes nothing else: same server, same agent config, same permission policy. Without this an alias could only have one provider per backend, and picking the other one meant editing the user's config by hand.",
   "backends": {
     "codex": {
       "description": "The Codex CLI (codex exec) on your ChatGPT sign-in.",
@@ -10,7 +10,8 @@
         "via codex",
         "codex cli",
         "through codex"
-      ]
+      ],
+      "runsOn": "codex"
     },
     "opencode": {
       "description": "A local OpenCode server.",
@@ -19,6 +20,19 @@
         "open code",
         "via opencode",
         "through opencode"
+      ],
+      "runsOn": "opencode"
+    },
+    "openrouter": {
+      "description": "OpenRouter, reached through the same local OpenCode server.",
+      "runsOn": "opencode",
+      "spoken": [
+        "openrouter opencode",
+        "opencode openrouter",
+        "via openrouter",
+        "through openrouter",
+        "openrouter",
+        "open router"
       ]
     }
   },
@@ -182,7 +196,7 @@
       }
     },
     "union": {
-      "description": "Union Alpha, free on OpenCode.",
+      "description": "Union Alpha. Free on OpenCode; say openrouter for the OpenRouter copy.",
       "spoken": [
         "union alpha free",
         "union-alpha-free",
@@ -196,6 +210,12 @@
           "standard": {
             "providerID": "opencode",
             "modelID": "union-alpha"
+          }
+        },
+        "openrouter": {
+          "standard": {
+            "providerID": "openrouter",
+            "modelID": "stealth/union-alpha"
           }
         }
       }

@@ -149,7 +149,7 @@ export async function delegate({
     ...(inventories.codex ? { codex: inventories.codex } : {})
   }, { backend });
 
-  if (resolved.backend === "opencode" && inventories.opencodeError) {
+  if (resolved.runsOn === "opencode" && inventories.opencodeError) {
     throw inventories.opencodeError;
   }
 
@@ -179,7 +179,7 @@ export async function delegate({
   // is missing, and that only surfaces on reading the reply.
   // OpenCode only: a Codex researcher runs in a read-only sandbox, where
   // commands are allowed and `git log` is a reasonable thing to ask for.
-  if (agent === "external-researcher" && resolved.backend === "opencode") {
+  if (agent === "external-researcher" && resolved.runsOn === "opencode") {
     const asks = commandInstructions(task);
     if (asks.length > 0) {
       throw new Error(
@@ -235,7 +235,7 @@ export async function delegate({
     }
   }
 
-  if (resolved.backend === "codex") {
+  if (resolved.runsOn === "codex") {
     return dispatchCodex({
       workspace,
       resolved,

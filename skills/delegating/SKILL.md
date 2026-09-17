@@ -41,11 +41,17 @@ does. Show the message and stop. Do not reach for the model next to it: the
 whole reason that name refuses is that resolving it to a neighbour would run
 something the user did not ask for.
 
-## Two backends, and why it matters which one runs
+## Which backend runs it, and why that matters
 
 `resolve` also returns a `backend`, and it is not cosmetic. `codex` runs the job
 through the Codex CLI on the user's ChatGPT sign-in; `opencode` runs it against
 a metered provider key. Same model, different bill.
+
+It also returns `runsOn`, the execution path, which is not always the backend's
+name. `openrouter` is a provider reached through the same OpenCode server, so
+its `backend` is `openrouter` and its `runsOn` is `opencode`. Read `runsOn` when
+you need to know what to expect of a job, such as whether permission prompts
+apply to it.
 
 Pass it through to the dispatch as `--backend <backend>`, and name it in your
 report. When `defaultedBackend` is true the user did not say which one, so it

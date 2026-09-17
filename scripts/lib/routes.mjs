@@ -25,6 +25,25 @@ const DEFAULTS_FILE = path.resolve(HERE, "..", "..", "config", "routes.default.j
 
 export const DEFAULT_BACKEND = "opencode";
 
+/**
+ * The execution path a backend uses, which is not always the backend itself.
+ *
+ * OpenRouter is a provider reached through the same local OpenCode server, so
+ * "openrouter" selects a different provider for the same model and leaves
+ * everything downstream alone: the server, the agent config, the permission
+ * policy. Treating it as its own execution path would have meant a second
+ * dispatch route that does the same thing, and treating it as a plain provider
+ * meant an alias could hold only one of the two and the other required editing
+ * the user's config by hand.
+ *
+ * Falls back to the backend's own name, so a backend that says nothing runs on
+ * itself and the existing two keep behaving exactly as before.
+ */
+export function runsOn(backend, backends = null) {
+  const table = backends ?? loadRouteTable().backends;
+  return table?.[backend]?.runsOn ?? backend;
+}
+
 export class RouteUnavailableError extends Error {
   constructor(message, { alias, route, backend, candidates = [] } = {}) {
     super(message);
@@ -271,7 +290,11 @@ export function resolveRoute(alias, route, inventory = null, { backend = null } 
     );
   }
 
-  const inventoryForBackend = live[chosen];
+  // Verified against the inventory of the path that will run it, not of the
+  // name it was asked for by: there is no separate OpenRouter inventory, its
+  // ids are listed by the OpenCode server alongside every other provider's.
+  const path = runsOn(chosen, table.backends);
+  const inventoryForBackend = live[path];
   if (inventoryForBackend && !offers(inventoryForBackend, chosen, target)) {
     const wanted = chosen === "codex" ? target.modelID : qualify(target, chosen);
     throw new RouteUnavailableError(
@@ -284,6 +307,9 @@ export function resolveRoute(alias, route, inventory = null, { backend = null } 
     alias,
     route,
     backend: chosen,
+    // What actually runs it. Callers branch on this rather than on `backend`,
+    // or a new provider-only backend would fall through to the wrong path.
+    runsOn: path,
     providerID: target.providerID ?? null,
     modelID: target.modelID,
     qualified: qualify(target, chosen)
