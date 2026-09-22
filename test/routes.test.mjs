@@ -20,7 +20,7 @@ const LIVE = [
   "fireworks-ai/accounts/fireworks/routers/kimi-k3-fast",
   "fireworks-ai/accounts/fireworks/routers/glm-5p2-fast",
   "fireworks-ai/accounts/fireworks/models/glm-5p3-flash",
-  "opencode/gpt-5.6-sol"
+  "opencode/gpt-6-sol"
 ];
 
 test("resolves a known alias and route to a split provider/model pair", () => {
@@ -52,7 +52,7 @@ test("an unknown alias fails and lists what does exist", () => {
 test("a missing route on a known alias names the routes that exist", () => {
   // sol is standard-only on purpose. Asking for a fast route must fail loudly
   // rather than quietly serving a different model.
-  assert.throws(() => resolveRoute("sol", "fast", LIVE), /Available: standard/);
+  assert.throws(() => resolveRoute("sol", "fast", LIVE, { backend: "opencode" }), /Available: standard/);
 });
 
 test("a reserved alias with no live ID fails with an explanation", () => {
@@ -156,15 +156,15 @@ test("a live gpt-6-astra id promotes the reserved alias to dispatchable", () => 
 });
 
 test("a gpt-6 id that is not a known candidate is surfaced, not guessed at", () => {
-  // Matches astra watch patterns but is not one of its pending ids, so it is
+  // Matches luna's watch pattern but is not one of its pending ids, so it is
   // reported for a human to wire up and nothing is dispatched to it.
-  const inventory = [...LIVE, "opencode/gpt-6-nova"];
+  const inventory = ["opencode/kimi-k3", "opencode/gpt-6-luna-mini"];
   const found = findReservedCandidates(inventory);
 
   assert.equal(found.length, 1);
-  assert.equal(found[0].alias, "astra");
-  assert.deepEqual(found[0].matches, ["opencode/gpt-6-nova"]);
-  assert.throws(() => resolveRoute("astra", "standard", inventory), /reserved/);
+  assert.equal(found[0].alias, "luna");
+  assert.deepEqual(found[0].matches, ["opencode/gpt-6-luna-mini"]);
+  assert.throws(() => resolveRoute("luna", "standard", inventory, { backend: "opencode" }), /reserved/);
 });
 
 test("no reserved candidates are reported when nothing matches", () => {

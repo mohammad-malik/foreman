@@ -60,10 +60,14 @@ That allows dispatch, not node in general, and it removes no gate: the repositor
 |---|---|---|---|
 | `kimi` | kimi, kimi k3, k3, moonshot | OpenCode | standard (Zen), fast (Fireworks router) |
 | `glm` | glm, glm 5.3, glm flash, flash, zhipu | OpenCode | GLM 5.3 Flash on both tiers |
-| `sol` | sol, gpt 5.6 sol, gpt 5.6 | Codex | standard |
-| `luna` | luna, gpt 5.6 luna, moon | Codex | standard |
-| `astra` | astra, gpt-6-astra, gpt 6 | Codex | GPT-6, live |
-| `union` | union, union alpha, union alpha free | OpenCode, or OpenRouter if you say so | standard |
+| `astra` | astra, gpt 6 astra, gpt-6-astra | Codex, or OpenCode if you say so | GPT-6 Astra, live on both |
+| `sol` | sol, gpt 6 sol, gpt-6-sol | Codex | GPT-6 Sol. OpenCode only for now: say "opencode sol" |
+| `luna` | luna, gpt 6 luna, gpt-6-luna, moon | Codex | GPT-6 Luna. OpenCode only for now: say "opencode luna" |
+
+Bare "gpt 6" asks which of the three you mean. The GPT-5.6 names refuse rather
+than run GPT-6 in their place. Sol and luna default to Codex, which does not
+offer them on a ChatGPT sign-in yet; each promotes itself the day Codex lists
+its id, with no edit here.
 
 Spoken names live in `config/routes.default.json`. Adding a model, or another
 way of saying one, is an edit to that file: no code knows what "kimi" means.
@@ -82,14 +86,15 @@ A model can be reachable more than one way, and the ways are not equivalent.
   command in a chained line is judged separately, so joining one to an approved
   one gains nothing.
 
-So `sol` and `luna` default to Codex. Say a backend out loud to override it:
+So the OpenAI models default to Codex. Say a backend out loud to override it:
 "have opencode sol review this" runs the same model against the API key instead.
 
 A backend can also name a provider rather than a way of running. `openrouter`
-reaches OpenRouter through the same local OpenCode server, so "openrouter union"
+reaches OpenRouter through the same local OpenCode server, so "openrouter <model>"
 swaps the provider and changes nothing else: same server, same agent config,
 same permission policy. Say nothing, or say `opencode`, and you get the OpenCode
-copy. A backend declares this with `runsOn` in the route table, and code that
+copy. No shipped model has an OpenRouter route right now; one is added with a
+`backends.openrouter` block for the alias. A backend declares this with `runsOn` in the route table, and code that
 decides how a job runs reads that rather than the backend's name.
 Which backend ran is recorded on the job and printed in the report, never
 inferred afterwards.
@@ -107,10 +112,11 @@ further than an error:
 - **Retired names.** GLM means GLM 5.3 Flash and nothing else. Say `glm 5.2`
   and it refuses, because that phrase contains `glm` and would otherwise match
   the alias and run 5.3 Flash for someone who asked for 5.2.
-- **Reserved names that promote themselves.** `astra` carries the ids GPT-6 is
-  expected to ship under. The day one appears in the live inventory the alias
-  becomes dispatchable with no edit here, and until then it refuses rather than
-  guessing at a name.
+- **Reserved names that promote themselves.** `astra`, `sol` and `luna` carry
+  their GPT-6 ids per backend, and each backend is used only while it lists the
+  id. Sol and luna are live on OpenCode and not yet on Codex; the day Codex
+  lists them they run there by default with no edit here, and until then
+  saying plain "sol" refuses rather than quietly billing the API key.
 
 ## No nested agents, for now
 

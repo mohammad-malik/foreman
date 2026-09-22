@@ -1,5 +1,5 @@
 {
-  "version": 4,
+  "version": 5,
   "//": "Spoken names are DATA, not logic. Nothing in the runtime or the skills knows that 'kimi' or 'sol' means anything: `resolve` matches a phrase against these lists. Adding a model, a backend, or another way of saying one, is an edit to this file and nothing else. Speed words (fast, quick, cheap, standard, full) are handled by resolve and are not listed here, so 'fast kimi' needs no entry of its own.",
   "//backends": "Two ways to actually run a model. `opencode` drives a local OpenCode server, which is how the non-OpenAI models are reachable. `codex` shells out to the Codex CLI, which runs OpenAI models on the ChatGPT sign-in rather than through a paid API key. Each alias names the backend it should use by default, and saying a backend word out loud overrides it: 'opencode sol' forces the OpenCode path. A backend also carries runsOn: which execution path it uses, which is not always itself. openrouter runsOn opencode, because OpenRouter is a provider reached through the same local server rather than a second way of running a job. Saying \"openrouter\" therefore swaps the provider and changes nothing else: same server, same agent config, same permission policy. Without this an alias could only have one provider per backend, and picking the other one meant editing the user's config by hand.",
   "backends": {
@@ -43,7 +43,20 @@
     "glm5.2": "GLM now means GLM 5.3 Flash. 5.2 is no longer routed. Say \"glm\" for 5.3 Flash.",
     "glm 5p2": "GLM now means GLM 5.3 Flash. 5.2 is no longer routed. Say \"glm\" for 5.3 Flash.",
     "glm 5.1": "Only GLM 5.3 Flash is routed. Say \"glm\".",
-    "glm 5": "Only GLM 5.3 Flash is routed. Say \"glm\"."
+    "glm 5": "Only GLM 5.3 Flash is routed. Say \"glm\".",
+    "gpt 6": "GPT-6 is three models: astra, sol and luna. Say which one.",
+    "gpt-6": "GPT-6 is three models: astra, sol and luna. Say which one.",
+    "gpt6": "GPT-6 is three models: astra, sol and luna. Say which one.",
+    "gpt 5.6": "GPT-5.6 is no longer routed. Sol and luna now mean their GPT-6 versions.",
+    "gpt-5.6": "GPT-5.6 is no longer routed. Sol and luna now mean their GPT-6 versions.",
+    "gpt5.6": "GPT-5.6 is no longer routed. Sol and luna now mean their GPT-6 versions.",
+    "gpt 5.6 sol": "GPT-5.6 Sol is no longer routed. \"sol\" now means GPT-6 Sol.",
+    "gpt-5.6-sol": "GPT-5.6 Sol is no longer routed. \"sol\" now means GPT-6 Sol.",
+    "gpt5.6 sol": "GPT-5.6 Sol is no longer routed. \"sol\" now means GPT-6 Sol.",
+    "gpt 5.6 luna": "GPT-5.6 Luna is no longer routed. \"luna\" now means GPT-6 Luna.",
+    "gpt-5.6-luna": "GPT-5.6 Luna is no longer routed. \"luna\" now means GPT-6 Luna.",
+    "gpt5.6 luna": "GPT-5.6 Luna is no longer routed. \"luna\" now means GPT-6 Luna.",
+    "gpt 5.6 moon": "GPT-5.6 Luna is no longer routed. \"luna\" now means GPT-6 Luna."
   },
   "aliases": {
     "kimi": {
@@ -100,72 +113,88 @@
       }
     },
     "sol": {
-      "description": "GPT-5.6 Sol. Runs through Codex on the ChatGPT sign-in unless you say opencode.",
+      "description": "GPT-6 Sol (gpt-6-sol). Defaults to Codex on the ChatGPT sign-in, which does not offer it yet, so for now say \"opencode sol\" to run it on the API key.",
+      "//": "Replaced gpt-5.6-sol. The 5.6 names are retired above rather than pointed here, because saying \"gpt 5.6 sol\" and getting a different model is the substitution this table exists to prevent. Written as pending ids on both backends, the way astra started: OpenCode lists opencode/gpt-6-sol, while Codex answers a ChatGPT-account request for gpt-6-sol with a 400. The Codex route promotes itself the day Codex lists the id, with no edit here.",
       "spoken": [
         "sol",
-        "gpt 5.6 sol",
-        "gpt-5.6-sol",
-        "gpt5.6 sol",
-        "gpt 5.6",
-        "gpt-5.6",
-        "gpt5.6"
+        "gpt 6 sol",
+        "gpt-6-sol",
+        "gpt6 sol",
+        "gpt6-sol"
       ],
+      "reserved": true,
       "defaultBackend": "codex",
-      "backends": {
+      "watchPatterns": [
+        "gpt-6-sol"
+      ],
+      "backends": {},
+      "pendingBackends": {
         "codex": {
-          "standard": {
-            "modelID": "gpt-5.6-sol"
-          }
+          "standard": [
+            {
+              "modelID": "gpt-6-sol"
+            }
+          ]
         },
         "opencode": {
-          "standard": {
-            "providerID": "opencode",
-            "modelID": "gpt-5.6-sol"
-          }
+          "standard": [
+            {
+              "providerID": "opencode",
+              "modelID": "gpt-6-sol"
+            }
+          ]
         }
       }
     },
     "luna": {
-      "description": "GPT-5.6 Luna. Runs through Codex on the ChatGPT sign-in unless you say opencode.",
+      "description": "GPT-6 Luna (gpt-6-luna). Defaults to Codex on the ChatGPT sign-in, which does not offer it yet, so for now say \"opencode luna\" to run it on the API key.",
+      "//": "Replaced gpt-5.6-luna. The 5.6 names are retired above rather than pointed here, because saying \"gpt 5.6 luna\" and getting a different model is the substitution this table exists to prevent. Written as pending ids on both backends, the way astra started: OpenCode lists opencode/gpt-6-luna, while Codex answers a ChatGPT-account request for gpt-6-luna with a 400. The Codex route promotes itself the day Codex lists the id, with no edit here.",
       "spoken": [
         "luna",
-        "gpt 5.6 luna",
-        "gpt-5.6-luna",
-        "gpt5.6 luna",
-        "gpt 5.6 moon",
+        "gpt 6 luna",
+        "gpt-6-luna",
+        "gpt6 luna",
+        "gpt6-luna",
         "moon"
       ],
+      "reserved": true,
       "defaultBackend": "codex",
-      "backends": {
+      "watchPatterns": [
+        "gpt-6-luna"
+      ],
+      "backends": {},
+      "pendingBackends": {
         "codex": {
-          "standard": {
-            "modelID": "gpt-5.6-luna"
-          }
+          "standard": [
+            {
+              "modelID": "gpt-6-luna"
+            }
+          ]
         },
         "opencode": {
-          "standard": {
-            "providerID": "opencode",
-            "modelID": "gpt-5.6-luna"
-          }
+          "standard": [
+            {
+              "providerID": "opencode",
+              "modelID": "gpt-6-luna"
+            }
+          ]
         }
       }
     },
     "astra": {
-      "description": "GPT-6, shipping as gpt-6-astra. Live on Codex now, so it runs on the ChatGPT sign-in like sol and luna.",
-      "//backend": "This briefly defaulted to OpenCode, because Codex on a ChatGPT account answered a gpt-6-astra request with a 400 saying the model was not supported for that account type. OpenAI has since enabled it: the local model cache lists gpt-6-astra and a real `codex exec -m gpt-6-astra` returns a completed turn. The OpenCode candidates stay pending, so if it appears there too, saying \"opencode astra\" reaches it.",
+      "description": "GPT-6 Astra, the GPT-6 model that is live today. Runs through Codex on the ChatGPT sign-in; say opencode to run it on the API key instead.",
+      "//backend": "Live on both backends: the Codex model cache lists gpt-6-astra and a real `codex exec -m gpt-6-astra` completes, and OpenCode lists opencode/gpt-6-astra. Codex stays the default because it bills the ChatGPT sign-in rather than a metered key. It is still written as a reserved alias with pending ids, so each backend is used only while it actually lists the model. Bare \"gpt 6\" no longer means astra: GPT-6 is three models now, and that phrase is retired above so it asks which one.",
       "spoken": [
         "astra",
         "gpt-6-astra",
         "gpt6 astra",
         "gpt 6 astra",
-        "gpt-6",
-        "gpt6",
-        "gpt 6"
+        "gpt6-astra"
       ],
       "reserved": true,
       "defaultBackend": "codex",
       "watchPatterns": [
-        "gpt-6",
+        "gpt-6-astra",
         "astra"
       ],
       "backends": {},
@@ -175,9 +204,6 @@
           "standard": [
             {
               "modelID": "gpt-6-astra"
-            },
-            {
-              "modelID": "gpt-6"
             }
           ]
         },
@@ -186,37 +212,8 @@
             {
               "providerID": "opencode",
               "modelID": "gpt-6-astra"
-            },
-            {
-              "providerID": "opencode",
-              "modelID": "gpt-6"
             }
           ]
-        }
-      }
-    },
-    "union": {
-      "description": "Union Alpha. Free on OpenCode; say openrouter for the OpenRouter copy.",
-      "spoken": [
-        "union alpha free",
-        "union-alpha-free",
-        "union alpha",
-        "union-alpha",
-        "union"
-      ],
-      "defaultBackend": "opencode",
-      "backends": {
-        "opencode": {
-          "standard": {
-            "providerID": "opencode",
-            "modelID": "union-alpha"
-          }
-        },
-        "openrouter": {
-          "standard": {
-            "providerID": "openrouter",
-            "modelID": "stealth/union-alpha"
-          }
         }
       }
     }

@@ -69,37 +69,86 @@ test("flash is treated as a model word, not a speed word", () => {
   assert.equal(resolveSpoken("flash").alias, "glm");
 });
 
-test("gpt 5.6 sol resolves to sol, and not to astra", () => {
-  for (const phrase of ["sol", "gpt 5.6 sol", "gpt-5.6-sol", "gpt5.6 sol"]) {
-    const match = resolveSpoken(phrase);
+// What the backends offered when sol and luna moved to GPT-6: OpenCode lists
+// all three GPT-6 ids, Codex on a ChatGPT sign-in only astra.
+const TODAY = {
+  opencode: ["opencode/gpt-6-sol", "opencode/gpt-6-luna", "opencode/gpt-6-astra"],
+  codex: ["gpt-6-astra"]
+};
+
+// The day Codex catches up.
+const CODEX_TOO = {
+  opencode: TODAY.opencode,
+  codex: ["gpt-6-sol", "gpt-6-luna", "gpt-6-astra"]
+};
+
+test("sol means gpt-6-sol, and not astra", () => {
+  for (const phrase of ["sol", "gpt 6 sol", "gpt-6-sol", "gpt6 sol"]) {
+    const match = resolveSpoken(phrase, CODEX_TOO);
     assert.equal(match.alias, "sol", phrase);
     // Codex, because that is sol's default backend: it runs on a ChatGPT
     // sign-in rather than a metered API key.
     assert.equal(match.backend, "codex", phrase);
-    assert.equal(match.qualified, "codex/gpt-5.6-sol", phrase);
+    assert.equal(match.qualified, "codex/gpt-6-sol", phrase);
     assert.equal(match.defaultedBackend, true, phrase);
   }
 });
 
-test("luna resolves, and defaults to codex like sol", () => {
-  for (const phrase of ["luna", "gpt 5.6 luna", "gpt-5.6-luna", "moon"]) {
-    const match = resolveSpoken(phrase);
+test("luna means gpt-6-luna, and defaults to codex like sol", () => {
+  for (const phrase of ["luna", "gpt 6 luna", "gpt-6-luna", "moon"]) {
+    const match = resolveSpoken(phrase, CODEX_TOO);
     assert.equal(match.alias, "luna", phrase);
-    assert.equal(match.qualified, "codex/gpt-5.6-luna", phrase);
+    assert.equal(match.qualified, "codex/gpt-6-luna", phrase);
   }
+});
+
+test("sol and luna refuse on codex until codex offers them", () => {
+  // Codex answers a ChatGPT-account request for gpt-6-sol with a 400. The
+  // OpenCode route sitting right there is not taken on the user's behalf: it
+  // bills an API key for a job the config says runs on the sign-in.
+  for (const name of ["sol", "luna"]) {
+    assert.throws(() => resolveSpoken(name, TODAY), /cannot run on the codex backend/, name);
+
+    const asked = resolveSpoken(`opencode ${name}`, TODAY);
+    assert.equal(asked.qualified, `opencode/gpt-6-${name}`, name);
+  }
+});
+
+test("the GPT-5.6 names refuse rather than run GPT-6", () => {
+  // Saying "gpt 5.6 sol" and getting a different model is the substitution
+  // this table exists to prevent, so the old names are retired, not redirected.
+  for (const phrase of ["gpt 5.6 sol", "gpt-5.6-sol", "gpt 5.6 luna", "gpt-5.6-luna", "gpt 5.6"]) {
+    assert.throws(
+      () => resolveSpoken(phrase, CODEX_TOO),
+      (error) => error.code === "spoken_retired",
+      phrase
+    );
+  }
+});
+
+test("bare gpt 6 asks which one", () => {
+  // It used to mean astra, back when astra was the only GPT-6 model.
+  for (const phrase of ["gpt 6", "gpt-6", "gpt6"]) {
+    assert.throws(
+      () => resolveSpoken(phrase, CODEX_TOO),
+      (error) => error.code === "spoken_retired" && /astra, sol and luna/.test(error.message),
+      phrase
+    );
+  }
+  assert.equal(resolveSpoken("gpt 6 astra", CODEX_TOO).alias, "astra");
 });
 
 test("saying a backend out loud overrides the model's default", () => {
   // The point of the override: the same model, billed a different way.
   for (const phrase of ["opencode sol", "via opencode luna", "open code sol"]) {
-    const match = resolveSpoken(phrase);
+    const match = resolveSpoken(phrase, CODEX_TOO);
     assert.equal(match.backend, "opencode", phrase);
     assert.equal(match.requestedBackend, "opencode", phrase);
     assert.equal(match.defaultedBackend, false, phrase);
     assert.match(match.qualified, /^opencode\//, phrase);
   }
 
-  const explicit = resolveSpoken("codex sol");
+  const explicit = resolveSpoken("codex sol", CODEX_TOO);
   assert.equal(explicit.backend, "codex");
   assert.equal(explicit.defaultedBackend, false);
 });
@@ -129,7 +178,7 @@ test("a backend named with no model refuses instead of picking one", () => {
 test("a model with one route gets it, and says the route was substituted", () => {
   // sol is standard-only on both backends. Asking for fast yields standard
   // rather than an error, but the substitution is reported rather than hidden.
-  const match = resolveSpoken("fast sol");
+  const match = resolveSpoken("fast sol", CODEX_TOO);
   assert.equal(match.alias, "sol");
   assert.equal(match.route, "standard");
   assert.equal(match.substitutedRoute, true);
@@ -137,18 +186,16 @@ test("a model with one route gets it, and says the route was substituted", () =>
 });
 
 test("astra resolves by itself once its id appears upstream", () => {
-  // "gpt 6 astra will be live soon" should not mean editing a config file on
-  // the day it lands.
   assert.throws(() => resolveSpoken("gpt-6-astra", ["opencode/kimi-k3"]), /reserved/);
 
-  // Codex is astra's default, like the other OpenAI models. It spent a few
-  // hours defaulting to OpenCode because Codex refused the model on a ChatGPT
-  // account; OpenAI enabled it, and a real `codex exec -m gpt-6-astra` now
-  // returns a completed turn.
-  const live = resolveSpoken("gpt-6-astra", { codex: ["gpt-6-astra"] });
+  // Codex is astra's default, like the other OpenAI models.
+  const live = resolveSpoken("gpt-6-astra", TODAY);
   assert.equal(live.alias, "astra");
   assert.equal(live.backend, "codex");
   assert.equal(live.qualified, "codex/gpt-6-astra");
+
+  // And it is live on OpenCode too, for anyone who asks for that.
+  assert.equal(resolveSpoken("opencode astra", TODAY).qualified, "opencode/gpt-6-astra");
 });
 
 test("promotion on one backend never moves a model's default to it", () => {
@@ -157,27 +204,20 @@ test("promotion on one backend never moves a model's default to it", () => {
   // right there: that would bill an API key for a job the config says runs on
   // a ChatGPT sign-in.
   const solGoneFromCodex = {
-    opencode: ["opencode/gpt-5.6-sol"],
-    codex: ["gpt-5.6-luna"]
+    opencode: ["opencode/gpt-6-sol"],
+    codex: ["gpt-6-luna"]
   };
 
-  assert.throws(
-    () => resolveSpoken("sol", solGoneFromCodex),
-    (error) => {
-      assert.match(error.message, /does not currently list it/);
-      return true;
-    }
-  );
+  assert.throws(() => resolveSpoken("sol", solGoneFromCodex), /cannot run on the codex backend/);
 
   // Saying the backend out loud is how you get it.
   const asked = resolveSpoken("opencode sol", solGoneFromCodex);
   assert.equal(asked.backend, "opencode");
-  assert.equal(asked.qualified, "opencode/gpt-5.6-sol");
+  assert.equal(asked.qualified, "opencode/gpt-6-sol");
 });
 
-test("astra refuses on codex, because a ChatGPT account cannot run it", () => {
-  // Not a guess: the Codex CLI returns a 400 for this model on this account
-  // type. Refusing here costs nothing; not refusing wasted a whole review.
+test("astra refuses on codex when codex does not offer it", () => {
+  // Refusing here costs nothing; not refusing once wasted a whole review.
   assert.throws(
     () => resolveSpoken("codex astra", { opencode: ["opencode/gpt-6-astra"] }),
     (error) => {
@@ -206,8 +246,8 @@ test("a name embedded in a sentence still resolves", () => {
 });
 
 test("a reserved model refuses rather than falling back", () => {
-  // GPT-6 has no live provider id yet. Dispatching to something else would be
-  // the worst possible outcome.
+  // With no inventory nothing is known to be live. Dispatching to something
+  // else would be the worst possible outcome.
   assert.throws(
     () => resolveSpoken("gpt-6-astra"),
     (error) => {

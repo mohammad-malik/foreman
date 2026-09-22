@@ -7,7 +7,7 @@
  * is connected. Getting back a confident answer from a model you did not
  * choose is worse than getting no answer.
  *
- * A model can be reachable more than one way. GPT-5.6 Sol runs through the
+ * A model can be reachable more than one way. GPT-6 Astra runs through the
  * Codex CLI on a ChatGPT sign-in, and also through OpenCode against a paid API
  * key. Those are not interchangeable, so each alias names the backend it uses
  * by default and the other one is reached only by asking for it. Which backend
