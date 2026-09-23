@@ -61,13 +61,18 @@ That allows dispatch, not node in general, and it removes no gate: the repositor
 | `kimi` | kimi, kimi k3, k3, moonshot | OpenCode | standard (Zen), fast (Fireworks router) |
 | `glm` | glm, glm 5.3, glm flash, flash, zhipu | OpenCode | GLM 5.3 Flash on both tiers |
 | `astra` | astra, gpt 6 astra, gpt-6-astra | Codex, or OpenCode if you say so | GPT-6 Astra, live on both |
-| `sol` | sol, gpt 6 sol, gpt-6-sol | Codex | GPT-6 Sol. OpenCode only for now: say "opencode sol" |
-| `luna` | luna, gpt 6 luna, gpt-6-luna, moon | Codex | GPT-6 Luna. OpenCode only for now: say "opencode luna" |
+| `sol` | sol, gpt 6 sol, gpt-6-sol | Codex, or OpenCode if you say so | GPT-6 Sol |
+| `luna` | luna, gpt 6 luna, gpt-6-luna, moon | Codex, or OpenCode if you say so | GPT-6 Luna |
 
 Bare "gpt 6" asks which of the three you mean. The GPT-5.6 names refuse rather
-than run GPT-6 in their place. Sol and luna default to Codex, which does not
-offer them on a ChatGPT sign-in yet; each promotes itself the day Codex lists
-its id, with no edit here.
+than run GPT-6 in their place. Codex on a ChatGPT sign-in did not serve sol or
+luna yet when they were added: a plain "sol" job fails within seconds with
+Codex's 400, and "opencode sol" runs it now.
+
+Codex's model list comes from its local cache, which is wrong in both
+directions: it has dropped gpt-6-astra while astra ran fine, and listed
+gpt-6-sol while Codex refused it. So a Codex route missing from that cache is
+reported as unverified and sent anyway, never refused.
 
 Spoken names live in `config/routes.default.json`. Adding a model, or another
 way of saying one, is an edit to that file: no code knows what "kimi" means.
@@ -112,11 +117,10 @@ further than an error:
 - **Retired names.** GLM means GLM 5.3 Flash and nothing else. Say `glm 5.2`
   and it refuses, because that phrase contains `glm` and would otherwise match
   the alias and run 5.3 Flash for someone who asked for 5.2.
-- **Reserved names that promote themselves.** `astra`, `sol` and `luna` carry
-  their GPT-6 ids per backend, and each backend is used only while it lists the
-  id. Sol and luna are live on OpenCode and not yet on Codex; the day Codex
-  lists them they run there by default with no edit here, and until then
-  saying plain "sol" refuses rather than quietly billing the API key.
+- **Reserved names that promote themselves.** An alias marked `reserved`
+  carries the ids a model is expected to ship under, and becomes dispatchable
+  the day one appears in a live inventory, with no edit here. Until then it
+  refuses rather than guessing. None ships reserved today.
 
 ## No nested agents, for now
 

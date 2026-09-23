@@ -113,8 +113,8 @@
       }
     },
     "sol": {
-      "description": "GPT-6 Sol (gpt-6-sol). Defaults to Codex on the ChatGPT sign-in, which does not offer it yet, so for now say \"opencode sol\" to run it on the API key.",
-      "//": "Replaced gpt-5.6-sol. The 5.6 names are retired above rather than pointed here, because saying \"gpt 5.6 sol\" and getting a different model is the substitution this table exists to prevent. Written as pending ids on both backends, the way astra started: OpenCode lists opencode/gpt-6-sol, while Codex answers a ChatGPT-account request for gpt-6-sol with a 400. The Codex route promotes itself the day Codex lists the id, with no edit here.",
+      "description": "GPT-6 Sol (gpt-6-sol). Runs through Codex on the ChatGPT sign-in unless you say opencode.",
+      "//": "Replaced gpt-5.6-sol. The 5.6 names are retired above rather than pointed here, because saying \"gpt 5.6 sol\" and getting a different model is the substitution this table exists to prevent. Routed explicitly rather than as pending ids, because Codex's model cache is wrong in both directions: it listed gpt-6-sol while Codex answered a ChatGPT-account request for it with a 400, and it dropped gpt-6-astra while astra ran fine. Until Codex serves it on this account, a codex job fails within seconds with that 400, and \"opencode sol\" runs it on the API key.",
       "spoken": [
         "sol",
         "gpt 6 sol",
@@ -122,33 +122,24 @@
         "gpt6 sol",
         "gpt6-sol"
       ],
-      "reserved": true,
       "defaultBackend": "codex",
-      "watchPatterns": [
-        "gpt-6-sol"
-      ],
-      "backends": {},
-      "pendingBackends": {
+      "backends": {
         "codex": {
-          "standard": [
-            {
-              "modelID": "gpt-6-sol"
-            }
-          ]
+          "standard": {
+            "modelID": "gpt-6-sol"
+          }
         },
         "opencode": {
-          "standard": [
-            {
-              "providerID": "opencode",
-              "modelID": "gpt-6-sol"
-            }
-          ]
+          "standard": {
+            "providerID": "opencode",
+            "modelID": "gpt-6-sol"
+          }
         }
       }
     },
     "luna": {
-      "description": "GPT-6 Luna (gpt-6-luna). Defaults to Codex on the ChatGPT sign-in, which does not offer it yet, so for now say \"opencode luna\" to run it on the API key.",
-      "//": "Replaced gpt-5.6-luna. The 5.6 names are retired above rather than pointed here, because saying \"gpt 5.6 luna\" and getting a different model is the substitution this table exists to prevent. Written as pending ids on both backends, the way astra started: OpenCode lists opencode/gpt-6-luna, while Codex answers a ChatGPT-account request for gpt-6-luna with a 400. The Codex route promotes itself the day Codex lists the id, with no edit here.",
+      "description": "GPT-6 Luna (gpt-6-luna). Runs through Codex on the ChatGPT sign-in unless you say opencode.",
+      "//": "Replaced gpt-5.6-luna. The 5.6 names are retired above rather than pointed here, because saying \"gpt 5.6 luna\" and getting a different model is the substitution this table exists to prevent. Routed explicitly rather than as pending ids, because Codex's model cache is wrong in both directions: it listed gpt-6-luna while Codex answered a ChatGPT-account request for it with a 400, and it dropped gpt-6-astra while astra ran fine. Until Codex serves it on this account, a codex job fails within seconds with that 400, and \"opencode luna\" runs it on the API key.",
       "spoken": [
         "luna",
         "gpt 6 luna",
@@ -157,33 +148,24 @@
         "gpt6-luna",
         "moon"
       ],
-      "reserved": true,
       "defaultBackend": "codex",
-      "watchPatterns": [
-        "gpt-6-luna"
-      ],
-      "backends": {},
-      "pendingBackends": {
+      "backends": {
         "codex": {
-          "standard": [
-            {
-              "modelID": "gpt-6-luna"
-            }
-          ]
+          "standard": {
+            "modelID": "gpt-6-luna"
+          }
         },
         "opencode": {
-          "standard": [
-            {
-              "providerID": "opencode",
-              "modelID": "gpt-6-luna"
-            }
-          ]
+          "standard": {
+            "providerID": "opencode",
+            "modelID": "gpt-6-luna"
+          }
         }
       }
     },
     "astra": {
       "description": "GPT-6 Astra, the GPT-6 model that is live today. Runs through Codex on the ChatGPT sign-in; say opencode to run it on the API key instead.",
-      "//backend": "Live on both backends: the Codex model cache lists gpt-6-astra and a real `codex exec -m gpt-6-astra` completes, and OpenCode lists opencode/gpt-6-astra. Codex stays the default because it bills the ChatGPT sign-in rather than a metered key. It is still written as a reserved alias with pending ids, so each backend is used only while it actually lists the model. Bare \"gpt 6\" no longer means astra: GPT-6 is three models now, and that phrase is retired above so it asks which one.",
+      "//backend": "Live on both backends and routed explicitly, not as pending ids. As pending ids it depended on Codex's models_cache.json listing gpt-6-astra, and Codex rewrites that file in place: a resolve that landed mid-rewrite read no Codex inventory, never promoted the Codex route, and refused astra on its default backend. An explicit route follows the Codex rule in codex.mjs instead, where an unreadable cache means unverified rather than absent. Codex is the default because it bills the ChatGPT sign-in rather than a metered key. Bare \"gpt 6\" no longer means astra: GPT-6 is three models now, and that phrase is retired above so it asks which one.",
       "spoken": [
         "astra",
         "gpt-6-astra",
@@ -191,29 +173,18 @@
         "gpt 6 astra",
         "gpt6-astra"
       ],
-      "reserved": true,
       "defaultBackend": "codex",
-      "watchPatterns": [
-        "gpt-6-astra",
-        "astra"
-      ],
-      "backends": {},
-      "//pendingBackends": "Candidate ids per backend, tried in order, promoted to real routes only when that backend actually offers one. So the day GPT-6 lands, 'have astra do X' works with no edit to this file, and until then astra refuses rather than guessing.",
-      "pendingBackends": {
+      "backends": {
         "codex": {
-          "standard": [
-            {
-              "modelID": "gpt-6-astra"
-            }
-          ]
+          "standard": {
+            "modelID": "gpt-6-astra"
+          }
         },
         "opencode": {
-          "standard": [
-            {
-              "providerID": "opencode",
-              "modelID": "gpt-6-astra"
-            }
-          ]
+          "standard": {
+            "providerID": "opencode",
+            "modelID": "gpt-6-astra"
+          }
         }
       }
     }

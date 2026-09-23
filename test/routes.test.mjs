@@ -14,6 +14,36 @@ const { listAliases, nearestMatches, resolveRoute, RouteUnavailableError, findRe
   await import("../scripts/lib/routes.mjs");
 const { saveConfig, loadConfig } = await import("../scripts/lib/state.mjs");
 
+// No shipped alias is reserved any more, so the reserved behaviour is
+// exercised on one defined here, for the length of one test.
+function withNova(body) {
+  const config = loadConfig();
+  config.routes = {
+    aliases: {
+      nova: {
+        description: "A model that has not shipped yet.",
+        spoken: ["nova", "gpt 7 nova", "gpt-7-nova"],
+        reserved: true,
+        defaultBackend: "codex",
+        watchPatterns: ["gpt-7"],
+        backends: {},
+        pendingBackends: {
+          codex: { standard: [{ modelID: "gpt-7-nova" }] },
+          opencode: { standard: [{ providerID: "opencode", modelID: "gpt-7-nova" }] }
+        }
+      }
+    }
+  };
+  saveConfig(config);
+  try {
+    body();
+  } finally {
+    const reset = loadConfig();
+    reset.routes = {};
+    saveConfig(reset);
+  }
+}
+
 const LIVE = [
   "opencode/kimi-k3",
   "opencode/glm-5.2",
@@ -56,10 +86,12 @@ test("a missing route on a known alias names the routes that exist", () => {
 });
 
 test("a reserved alias with no live ID fails with an explanation", () => {
-  assert.throws(
-    () => resolveRoute("astra", "standard", LIVE),
-    /reserved and has no live route yet/
-  );
+  withNova(() => {
+    assert.throws(
+      () => resolveRoute("nova", "standard", LIVE, { backend: "opencode" }),
+      /reserved and has no live route yet/
+    );
+  });
 });
 
 test("a route whose model vanished upstream fails instead of substituting", () => {
@@ -122,49 +154,63 @@ test("user overrides merge per alias without deleting sibling routes", () => {
   }
 });
 
-test("listAliases reports astra as reserved with no routes", () => {
-  const astra = listAliases().find((entry) => entry.alias === "astra");
-
-  assert.ok(astra, "astra should be present in the shipped table");
-  assert.equal(astra.reserved, true);
-  assert.deepEqual(astra.routes, []);
+test("listAliases reports a reserved alias with no routes", () => {
+  withNova(() => {
+    const nova = listAliases().find((entry) => entry.alias === "nova");
+    assert.equal(nova.reserved, true);
+    assert.deepEqual(nova.routes, []);
+  });
 });
 
-test("a live gpt-6-astra id promotes the reserved alias to dispatchable", () => {
-  // The point of reserving the alias: the day GPT-6 appears upstream it works,
-  // with no edit to the route table.
-  // Codex is astra's configured default, so the id appearing there makes it
-  // usable with no argument and no edit to the table.
-  const inventory = { opencode: LIVE, codex: ["gpt-6-astra"] };
+test("a live id promotes the reserved alias to dispatchable", () => {
+  // The point of reserving the alias: the day the id appears upstream it
+  // works, with no edit to the route table.
+  withNova(() => {
+    const inventory = { opencode: LIVE, codex: ["gpt-7-nova"] };
 
-  const resolved = resolveRoute("astra", "standard", inventory);
-  assert.equal(resolved.backend, "codex");
-  assert.equal(resolved.qualified, "codex/gpt-6-astra");
+    const resolved = resolveRoute("nova", "standard", inventory);
+    assert.equal(resolved.backend, "codex");
+    assert.equal(resolved.qualified, "codex/gpt-7-nova");
 
-  // A backend with no route for it still refuses rather than falling back.
-  assert.throws(
-    () => resolveRoute("astra", "standard", inventory, { backend: "opencode" }),
-    /cannot run on the opencode backend/
-  );
+    // A backend with no route for it still refuses rather than falling back.
+    assert.throws(
+      () => resolveRoute("nova", "standard", inventory, { backend: "opencode" }),
+      /cannot run on the opencode backend/
+    );
 
-  const astra = listAliases(inventory).find((entry) => entry.alias === "astra");
-  assert.equal(astra.reserved, false);
-  assert.equal(astra.promoted, true);
+    const nova = listAliases(inventory).find((entry) => entry.alias === "nova");
+    assert.equal(nova.reserved, false);
+    assert.equal(nova.promoted, true);
 
-  // Promoted, so it is reported as available rather than as something to watch.
-  assert.deepEqual(findReservedCandidates(inventory), []);
+    // Promoted, so it is reported as available rather than as something to watch.
+    assert.deepEqual(findReservedCandidates(inventory), []);
+  });
 });
 
-test("a gpt-6 id that is not a known candidate is surfaced, not guessed at", () => {
-  // Matches luna's watch pattern but is not one of its pending ids, so it is
-  // reported for a human to wire up and nothing is dispatched to it.
-  const inventory = ["opencode/kimi-k3", "opencode/gpt-6-luna-mini"];
-  const found = findReservedCandidates(inventory);
+test("an id that is not a known candidate is surfaced, not guessed at", () => {
+  // Matches the watch pattern but is not a pending id, so it is reported for
+  // a human to wire up and nothing is dispatched to it.
+  withNova(() => {
+    const inventory = ["opencode/kimi-k3", "opencode/gpt-7-mini"];
+    const found = findReservedCandidates(inventory);
 
-  assert.equal(found.length, 1);
-  assert.equal(found[0].alias, "luna");
-  assert.deepEqual(found[0].matches, ["opencode/gpt-6-luna-mini"]);
-  assert.throws(() => resolveRoute("luna", "standard", inventory, { backend: "opencode" }), /reserved/);
+    assert.equal(found.length, 1);
+    assert.equal(found[0].alias, "nova");
+    assert.deepEqual(found[0].matches, ["opencode/gpt-7-mini"]);
+    assert.throws(() => resolveRoute("nova", "standard", inventory, { backend: "opencode" }), /reserved/);
+  });
+});
+
+test("the GPT-6 models are routed, not waiting on a cache", () => {
+  for (const alias of ["astra", "sol", "luna"]) {
+    const entry = listAliases().find((candidate) => candidate.alias === alias);
+    assert.equal(entry.reserved, false, alias);
+    assert.equal(
+      resolveRoute(alias, "standard", { opencode: LIVE }).qualified,
+      `codex/gpt-6-${alias}`,
+      alias
+    );
+  }
 });
 
 test("no reserved candidates are reported when nothing matches", () => {

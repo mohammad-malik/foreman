@@ -295,7 +295,21 @@ export function resolveRoute(alias, route, inventory = null, { backend = null } 
   // ids are listed by the OpenCode server alongside every other provider's.
   const path = runsOn(chosen, table.backends);
   const inventoryForBackend = live[path];
-  if (inventoryForBackend && !offers(inventoryForBackend, chosen, target)) {
+  const listed = !inventoryForBackend || offers(inventoryForBackend, chosen, target);
+
+  // Codex's list is its models_cache.json, which is not a reliable record of
+  // what it will run: gpt-6-astra dropped in and out of it within minutes
+  // while `codex exec -m gpt-6-astra` kept completing. So for an explicit
+  // route a miss there is reported, not enforced. Codex rejects an id it truly
+  // does not serve within seconds, which costs less than refusing a live
+  // model. Pending ids still need the listing to promote, since for them it is
+  // the only evidence they exist.
+  const unverified =
+    !listed && path === "codex"
+      ? `Codex's model cache does not list ${target.modelID} right now. That cache is unreliable, so the job will be sent anyway; Codex refuses within seconds if it really does not serve the model.`
+      : null;
+
+  if (!listed && !unverified) {
     const wanted = chosen === "codex" ? target.modelID : qualify(target, chosen);
     throw new RouteUnavailableError(
       `Route ${alias}.${route} resolves to ${wanted} on ${chosen}, which does not currently list it. The provider may be disconnected or the model renamed.`,
@@ -312,7 +326,8 @@ export function resolveRoute(alias, route, inventory = null, { backend = null } 
     runsOn: path,
     providerID: target.providerID ?? null,
     modelID: target.modelID,
-    qualified: qualify(target, chosen)
+    qualified: qualify(target, chosen),
+    ...(unverified ? { unverified } : {})
   };
 }
 

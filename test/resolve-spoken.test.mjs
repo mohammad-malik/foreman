@@ -8,6 +8,30 @@ const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), "foreman-spoken-"));
 process.env.FOREMAN_STATE_DIR = SCRATCH;
 delete process.env.CLAUDE_PLUGIN_DATA;
 
+// No shipped alias is reserved any more, so the reserved behaviour is
+// exercised on one defined here. That is also how a user would add one.
+{
+  const { loadConfig, saveConfig } = await import("../scripts/lib/state.mjs");
+  const config = loadConfig();
+  config.routes = {
+    aliases: {
+      nova: {
+        description: "A model that has not shipped yet.",
+        spoken: ["nova", "gpt 7 nova", "gpt-7-nova"],
+        reserved: true,
+        defaultBackend: "codex",
+        watchPatterns: ["gpt-7"],
+        backends: {},
+        pendingBackends: {
+          codex: { standard: [{ modelID: "gpt-7-nova" }] },
+          opencode: { standard: [{ providerID: "opencode", modelID: "gpt-7-nova" }] }
+        }
+      }
+    }
+  };
+  saveConfig(config);
+}
+
 const { resolveSpoken, SpokenNameError, describeAvailable } = await import(
   "../scripts/lib/resolve-spoken.mjs"
 );
@@ -102,12 +126,15 @@ test("luna means gpt-6-luna, and defaults to codex like sol", () => {
   }
 });
 
-test("sol and luna refuse on codex until codex offers them", () => {
-  // Codex answers a ChatGPT-account request for gpt-6-sol with a 400. The
-  // OpenCode route sitting right there is not taken on the user's behalf: it
-  // bills an API key for a job the config says runs on the sign-in.
+test("sol and luna go to codex even while codex refuses them", () => {
+  // Codex's cache is no evidence either way, so plain "sol" goes to its
+  // default and a ChatGPT account that cannot run it fails within seconds
+  // with Codex's own 400. The OpenCode route is never taken on the user's
+  // behalf: it bills an API key for a job the config says runs on the sign-in.
   for (const name of ["sol", "luna"]) {
-    assert.throws(() => resolveSpoken(name, TODAY), /cannot run on the codex backend/, name);
+    const plain = resolveSpoken(name, TODAY);
+    assert.equal(plain.backend, "codex", name);
+    assert.match(plain.unverified, new RegExp(`gpt-6-${name}`), name);
 
     const asked = resolveSpoken(`opencode ${name}`, TODAY);
     assert.equal(asked.qualified, `opencode/gpt-6-${name}`, name);
@@ -185,47 +212,63 @@ test("a model with one route gets it, and says the route was substituted", () =>
   assert.equal(match.requestedRoute, "fast");
 });
 
-test("astra resolves by itself once its id appears upstream", () => {
-  assert.throws(() => resolveSpoken("gpt-6-astra", ["opencode/kimi-k3"]), /reserved/);
-
-  // Codex is astra's default, like the other OpenAI models.
-  const live = resolveSpoken("gpt-6-astra", TODAY);
-  assert.equal(live.alias, "astra");
+test("astra runs on codex even when the codex cache cannot be read", () => {
+  // Codex rewrites models_cache.json in place. As a pending id, astra read a
+  // mid-rewrite cache as "codex offers nothing", never promoted its Codex
+  // route, and refused on its own default backend. Routed explicitly, an
+  // unreadable cache is unverified rather than absent.
+  const noCodexCache = { opencode: ["opencode/gpt-6-astra"] };
+  const live = resolveSpoken("astra", noCodexCache);
   assert.equal(live.backend, "codex");
   assert.equal(live.qualified, "codex/gpt-6-astra");
 
-  // And it is live on OpenCode too, for anyone who asks for that.
+  assert.equal(resolveSpoken("gpt-6-astra", TODAY).qualified, "codex/gpt-6-astra");
   assert.equal(resolveSpoken("opencode astra", TODAY).qualified, "opencode/gpt-6-astra");
 });
 
-test("promotion on one backend never moves a model's default to it", () => {
-  // sol's default is codex. Codex being reachable but no longer offering the
-  // model must fail, not quietly fall through to the OpenCode route sitting
-  // right there: that would bill an API key for a job the config says runs on
-  // a ChatGPT sign-in.
+test("a model's default never moves to another backend", () => {
+  // sol's default is codex. Codex not listing it must not fall through to the
+  // OpenCode route sitting right there: that would bill an API key for a job
+  // the config says runs on a ChatGPT sign-in.
   const solGoneFromCodex = {
     opencode: ["opencode/gpt-6-sol"],
     codex: ["gpt-6-luna"]
   };
 
-  assert.throws(() => resolveSpoken("sol", solGoneFromCodex), /cannot run on the codex backend/);
+  assert.equal(resolveSpoken("sol", solGoneFromCodex).backend, "codex");
 
   // Saying the backend out loud is how you get it.
   const asked = resolveSpoken("opencode sol", solGoneFromCodex);
   assert.equal(asked.backend, "opencode");
   assert.equal(asked.qualified, "opencode/gpt-6-sol");
+
+  // A reserved alias promoted only on OpenCode still refuses on its default.
+  assert.throws(
+    () => resolveSpoken("nova", { opencode: ["opencode/gpt-7-nova"], codex: [] }),
+    /cannot run on the codex backend/
+  );
 });
 
-test("astra refuses on codex when codex does not offer it", () => {
-  // Refusing here costs nothing; not refusing once wasted a whole review.
-  assert.throws(
-    () => resolveSpoken("codex astra", { opencode: ["opencode/gpt-6-astra"] }),
-    (error) => {
-      assert.equal(error.code, "spoken_backend_unavailable");
-      assert.match(error.message, /does not run on codex/);
-      return true;
-    }
-  );
+test("a codex cache that omits a routed model warns instead of refusing", () => {
+  // Seen live: the cache dropped gpt-6-astra while codex exec still ran it.
+  // Refusing there blocked a working model; Codex itself refuses a model it
+  // does not serve within seconds.
+  const match = resolveSpoken("astra", { opencode: ["opencode/gpt-6-astra"], codex: ["gpt-5.5"] });
+  assert.equal(match.qualified, "codex/gpt-6-astra");
+  assert.match(match.unverified, /does not list gpt-6-astra/);
+
+  // Listed means verified, and says nothing.
+  assert.equal(resolveSpoken("astra", CODEX_TOO).unverified, undefined);
+
+  // A pending id is different: the listing is its only evidence, so a
+  // reserved alias still refuses until an inventory names it.
+  assert.throws(() => resolveSpoken("nova", TODAY), /reserved/);
+  assert.equal(resolveSpoken("nova", { codex: ["gpt-7-nova"] }).qualified, "codex/gpt-7-nova");
+});
+
+test("an OpenCode route missing from its inventory still refuses", () => {
+  // OpenCode's list comes from the running server, which is authoritative.
+  assert.throws(() => resolveSpoken("opencode astra", { opencode: ["opencode/kimi-k3"] }), /does not currently list it/);
 });
 
 test("synonyms resolve", () => {
@@ -246,10 +289,10 @@ test("a name embedded in a sentence still resolves", () => {
 });
 
 test("a reserved model refuses rather than falling back", () => {
-  // With no inventory nothing is known to be live. Dispatching to something
-  // else would be the worst possible outcome.
+  // With no inventory nothing is known to be live, and dispatching to
+  // something else would be the worst outcome.
   assert.throws(
-    () => resolveSpoken("gpt-6-astra"),
+    () => resolveSpoken("gpt-7-nova"),
     (error) => {
       assert.ok(error instanceof SpokenNameError);
       assert.equal(error.code, "route_reserved");

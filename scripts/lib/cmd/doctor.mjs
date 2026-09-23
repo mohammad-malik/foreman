@@ -162,8 +162,12 @@ export function doctor() {
           ? `${alias.alias}.${route.backend}.${route.route}${route.isDefaultBackend ? " (default)" : ""}`
           : `${alias.alias}.${route.route}`;
       try {
-        resolveRoute(alias.alias, route.route, inventories, { backend: route.backend });
-        record("ok", name, `${route.qualified}${alias.promoted ? "  (newly live)" : ""}`);
+        const resolved = resolveRoute(alias.alias, route.route, inventories, { backend: route.backend });
+        if (resolved.unverified) {
+          record("warn", name, `${route.qualified}: ${resolved.unverified}`);
+        } else {
+          record("ok", name, `${route.qualified}${alias.promoted ? "  (newly live)" : ""}`);
+        }
       } catch (error) {
         const detail = models
           ? `${error.message}${error.candidates?.length ? `\n${bullet(`closest live IDs: ${error.candidates.join(", ")}`, 8)}` : ""}`
