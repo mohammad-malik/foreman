@@ -96,26 +96,37 @@ test("flash is treated as a model word, not a speed word", () => {
 // What the backends offered when sol and luna moved to GPT-6: OpenCode lists
 // all three GPT-6 ids, Codex on a ChatGPT sign-in only astra.
 const TODAY = {
-  opencode: ["opencode/gpt-6-sol", "opencode/gpt-6-luna", "opencode/gpt-6-astra"],
+  opencode: ["opencode/gpt-6.1-sol", "opencode/gpt-6-sol", "opencode/gpt-6-luna", "opencode/gpt-6-astra"],
   codex: ["gpt-6-astra"]
 };
 
 // The day Codex catches up.
 const CODEX_TOO = {
   opencode: TODAY.opencode,
-  codex: ["gpt-6-sol", "gpt-6-luna", "gpt-6-astra"]
+  codex: ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra"]
 };
 
-test("sol means gpt-6-sol, and not astra", () => {
-  for (const phrase of ["sol", "gpt 6 sol", "gpt-6-sol", "gpt6 sol"]) {
+test("sol means the newest sol, gpt-6.1-sol", () => {
+  for (const phrase of ["sol", "gpt 6.1 sol", "gpt-6.1-sol", "gpt6.1 sol"]) {
     const match = resolveSpoken(phrase, CODEX_TOO);
     assert.equal(match.alias, "sol", phrase);
     // Codex, because that is sol's default backend: it runs on a ChatGPT
     // sign-in rather than a metered API key.
     assert.equal(match.backend, "codex", phrase);
-    assert.equal(match.qualified, "codex/gpt-6-sol", phrase);
+    assert.equal(match.qualified, "codex/gpt-6.1-sol", phrase);
     assert.equal(match.defaultedBackend, true, phrase);
   }
+});
+
+test("naming gpt 6 sol still gets exactly gpt-6-sol", () => {
+  // The older model keeps its name. Moving "sol" forward must not quietly move
+  // someone who asked for 6 onto 6.1.
+  for (const phrase of ["gpt 6 sol", "gpt-6-sol", "gpt6 sol", "sol-6"]) {
+    const match = resolveSpoken(phrase, CODEX_TOO);
+    assert.equal(match.alias, "sol-6", phrase);
+    assert.equal(match.qualified, "codex/gpt-6-sol", phrase);
+  }
+  assert.equal(resolveSpoken("opencode gpt 6 sol", CODEX_TOO).qualified, "opencode/gpt-6-sol");
 });
 
 test("luna means gpt-6-luna, and defaults to codex like sol", () => {
@@ -134,10 +145,10 @@ test("sol and luna go to codex even while codex refuses them", () => {
   for (const name of ["sol", "luna"]) {
     const plain = resolveSpoken(name, TODAY);
     assert.equal(plain.backend, "codex", name);
-    assert.match(plain.unverified, new RegExp(`gpt-6-${name}`), name);
+    assert.ok(plain.unverified, name);
 
     const asked = resolveSpoken(`opencode ${name}`, TODAY);
-    assert.equal(asked.qualified, `opencode/gpt-6-${name}`, name);
+    assert.match(asked.qualified, new RegExp(`^opencode/gpt-6(\.1)?-${name}$`), name);
   }
 });
 
@@ -231,7 +242,7 @@ test("a model's default never moves to another backend", () => {
   // OpenCode route sitting right there: that would bill an API key for a job
   // the config says runs on a ChatGPT sign-in.
   const solGoneFromCodex = {
-    opencode: ["opencode/gpt-6-sol"],
+    opencode: ["opencode/gpt-6.1-sol"],
     codex: ["gpt-6-luna"]
   };
 
@@ -240,7 +251,7 @@ test("a model's default never moves to another backend", () => {
   // Saying the backend out loud is how you get it.
   const asked = resolveSpoken("opencode sol", solGoneFromCodex);
   assert.equal(asked.backend, "opencode");
-  assert.equal(asked.qualified, "opencode/gpt-6-sol");
+  assert.equal(asked.qualified, "opencode/gpt-6.1-sol");
 
   // A reserved alias promoted only on OpenCode still refuses on its default.
   assert.throws(

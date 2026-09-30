@@ -61,13 +61,15 @@ That allows dispatch, not node in general, and it removes no gate: the repositor
 | `kimi` | kimi, kimi k3, k3, moonshot | OpenCode | standard (Zen), fast (Fireworks router) |
 | `glm` | glm, glm 5.3, glm flash, flash, zhipu | OpenCode | GLM 5.3 Flash on both tiers |
 | `astra` | astra, gpt 6 astra, gpt-6-astra | Codex, or OpenCode if you say so | GPT-6 Astra, live on both |
-| `sol` | sol, gpt 6 sol, gpt-6-sol | Codex, or OpenCode if you say so | GPT-6 Sol |
+| `sol` | sol, gpt 6.1 sol, gpt-6.1-sol | Codex, or OpenCode if you say so | GPT-6.1 Sol |
+| `sol-6` | gpt 6 sol, gpt-6-sol | Codex, or OpenCode if you say so | GPT-6 Sol, the one before 6.1 |
 | `luna` | luna, gpt 6 luna, gpt-6-luna, moon | Codex, or OpenCode if you say so | GPT-6 Luna |
 
 Bare "gpt 6" asks which of the three you mean. The GPT-5.6 names refuse rather
-than run GPT-6 in their place. Codex on a ChatGPT sign-in did not serve sol or
-luna yet when they were added: a plain "sol" job fails within seconds with
-Codex's 400, and "opencode sol" runs it now.
+than run GPT-6 in their place. Plain "sol" follows the newest Sol; naming an
+older one gets exactly that one. When 6.1 was added, Codex on a ChatGPT sign-in
+answered gpt-6.1-sol with a 400, so a plain "sol" job fails within seconds
+there until OpenAI enables it, and "opencode sol" runs it now.
 
 Codex's model list comes from its local cache, which is wrong in both
 directions: it has dropped gpt-6-astra while astra ran fine, and listed

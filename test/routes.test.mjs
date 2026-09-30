@@ -50,7 +50,7 @@ const LIVE = [
   "fireworks-ai/accounts/fireworks/routers/kimi-k3-fast",
   "fireworks-ai/accounts/fireworks/routers/glm-5p2-fast",
   "fireworks-ai/accounts/fireworks/models/glm-5p3-flash",
-  "opencode/gpt-6-sol"
+  "opencode/gpt-6.1-sol"
 ];
 
 test("resolves a known alias and route to a split provider/model pair", () => {
@@ -202,14 +202,11 @@ test("an id that is not a known candidate is surfaced, not guessed at", () => {
 });
 
 test("the GPT-6 models are routed, not waiting on a cache", () => {
-  for (const alias of ["astra", "sol", "luna"]) {
+  const expected = { astra: "gpt-6-astra", sol: "gpt-6.1-sol", "sol-6": "gpt-6-sol", luna: "gpt-6-luna" };
+  for (const [alias, id] of Object.entries(expected)) {
     const entry = listAliases().find((candidate) => candidate.alias === alias);
     assert.equal(entry.reserved, false, alias);
-    assert.equal(
-      resolveRoute(alias, "standard", { opencode: LIVE }).qualified,
-      `codex/gpt-6-${alias}`,
-      alias
-    );
+    assert.equal(resolveRoute(alias, "standard", { opencode: LIVE }).qualified, `codex/${id}`, alias);
   }
 });
 

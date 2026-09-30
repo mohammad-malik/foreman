@@ -105,7 +105,7 @@ test("a route missing from the live list is still refused", () => {
 });
 
 test("the existing backends are untouched", () => {
-  const gpt6 = { codex: ["gpt-6-sol"], opencode: ["opencode/gpt-6-sol"] };
+  const gpt6 = { codex: ["gpt-6.1-sol"], opencode: ["opencode/gpt-6.1-sol"] };
   assert.equal(resolveSpoken("codex sol", gpt6).runsOn, "codex");
   assert.equal(resolveSpoken("opencode sol", gpt6).runsOn, "opencode");
   assert.equal(resolveSpoken("kimi").runsOn, "opencode");
