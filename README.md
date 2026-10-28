@@ -58,14 +58,21 @@ That allows dispatch, not node in general, and it removes no gate: the repositor
 
 | Alias | Say | Backend | Routes |
 |---|---|---|---|
-| `kimi` | kimi, kimi k3, k3, moonshot | OpenCode | standard (Zen), fast (Fireworks router) |
+| `kimi` | kimi, kimi k3.1, kimi k3.1 pro, k3.1, kimi pro, moonshot | OpenCode, or OpenRouter if you say so | Kimi K3.1 Pro, standard only |
+| `kimi-k3` | kimi k3, kimi-k3, k3 | OpenCode | standard (Zen), fast (Fireworks router) |
 | `glm` | glm, glm 5.3, glm flash, flash, zhipu | OpenCode | GLM 5.3 Flash on both tiers |
 | `astra` | astra, gpt 6 astra, gpt-6-astra | Codex, or OpenCode if you say so | GPT-6 Astra, live on both |
 | `sol` | sol, gpt 6.1 sol, gpt-6.1-sol | Codex, or OpenCode if you say so | GPT-6.1 Sol |
 | `sol-6` | gpt 6 sol, gpt-6-sol | Codex, or OpenCode if you say so | GPT-6 Sol, the one before 6.1 |
 | `luna` | luna, gpt 6 luna, gpt-6-luna, moon | Codex, or OpenCode if you say so | GPT-6 Luna |
+| `terra` | terra, gpt 6.1 terra, gpt-6.1-terra | Codex, or OpenRouter if you say so | GPT-6.1 Terra |
 
-Bare "gpt 6" asks which of the three you mean. The GPT-5.6 names refuse rather
+Plain "kimi" means K3.1 Pro on Zen. It was routed there before Zen listed it,
+so until Zen does, "kimi" refuses and "openrouter kimi" runs it. "kimi k3"
+still gets exactly K3, with its fast tier.
+
+Bare "gpt 6" asks which of the three you mean, and bare "gpt 6.1" asks sol or
+terra. The GPT-5.6 names refuse rather
 than run GPT-6 in their place. Plain "sol" follows the newest Sol; naming an
 older one gets exactly that one. When 6.1 was added, Codex on a ChatGPT sign-in
 answered gpt-6.1-sol with a 400, so a plain "sol" job fails within seconds

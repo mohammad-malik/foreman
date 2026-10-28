@@ -56,17 +56,52 @@
     "gpt 5.6 luna": "GPT-5.6 Luna is no longer routed. \"luna\" now means GPT-6 Luna.",
     "gpt-5.6-luna": "GPT-5.6 Luna is no longer routed. \"luna\" now means GPT-6 Luna.",
     "gpt5.6 luna": "GPT-5.6 Luna is no longer routed. \"luna\" now means GPT-6 Luna.",
-    "gpt 5.6 moon": "GPT-5.6 Luna is no longer routed. \"luna\" now means GPT-6 Luna."
+    "gpt 5.6 moon": "GPT-5.6 Luna is no longer routed. \"luna\" now means GPT-6 Luna.",
+    "gpt 6.1": "GPT-6.1 is two models: sol and terra. Say which one.",
+    "gpt-6.1": "GPT-6.1 is two models: sol and terra. Say which one.",
+    "gpt6.1": "GPT-6.1 is two models: sol and terra. Say which one.",
+    "gpt 5.6 terra": "GPT-5.6 Terra is not routed. \"terra\" means GPT-6.1 Terra.",
+    "gpt-5.6-terra": "GPT-5.6 Terra is not routed. \"terra\" means GPT-6.1 Terra.",
+    "gpt5.6 terra": "GPT-5.6 Terra is not routed. \"terra\" means GPT-6.1 Terra."
   },
   "aliases": {
     "kimi": {
-      "description": "Moonshot Kimi K3. General purpose primary worker.",
+      "description": "Moonshot Kimi K3.1 Pro. General purpose primary worker. Runs on OpenCode Zen; say openrouter to run it there instead. No fast tier yet: \"fast kimi\" runs K3.1 Pro at standard speed and says so.",
+      "//": "Plain \"kimi\" follows the newest Kimi, now K3.1 Pro. Routed to Zen before Zen listed it (2026-10-28), so until it does, a plain \"kimi\" refuses with route_unavailable and \"openrouter kimi\" runs it now. Fireworks does not list it. The previous model stays reachable by its own name as kimi-k3, which keeps the Fireworks fast route.",
       "spoken": [
         "kimi",
+        "kimi k3.1",
+        "kimi-k3.1",
+        "kimi k3.1 pro",
+        "kimi-k3.1-pro",
+        "kimi pro",
+        "k3.1",
+        "k3.1 pro",
+        "moonshot"
+      ],
+      "defaultBackend": "opencode",
+      "backends": {
+        "opencode": {
+          "standard": {
+            "providerID": "opencode",
+            "modelID": "kimi-k3.1-pro"
+          }
+        },
+        "openrouter": {
+          "standard": {
+            "providerID": "openrouter",
+            "modelID": "moonshotai/kimi-k3.1-pro"
+          }
+        }
+      }
+    },
+    "kimi-k3": {
+      "description": "Moonshot Kimi K3, the Kimi before K3.1 Pro. Say \"kimi k3\". Has a fast tier on Fireworks.",
+      "//": "Kept when kimi moved to K3.1 Pro, so the older model is still reachable by name. Matching is by whole word, so \"k3\" never matches inside \"k3.1\".",
+      "spoken": [
         "kimi k3",
         "kimi-k3",
-        "k3",
-        "moonshot"
+        "k3"
       ],
       "defaultBackend": "opencode",
       "backends": {
@@ -120,10 +155,7 @@
         "gpt 6.1 sol",
         "gpt-6.1-sol",
         "gpt6.1 sol",
-        "gpt6.1-sol",
-        "gpt 6.1",
-        "gpt-6.1",
-        "gpt6.1"
+        "gpt6.1-sol"
       ],
       "defaultBackend": "codex",
       "backends": {
@@ -212,6 +244,31 @@
           "standard": {
             "providerID": "opencode",
             "modelID": "gpt-6-astra"
+          }
+        }
+      }
+    },
+    "terra": {
+      "description": "GPT-6.1 Terra (gpt-6.1-terra). Runs through Codex on the ChatGPT sign-in; say openrouter to run it there instead.",
+      "//": "OpenCode Zen does not list gpt-6.1-terra, so the second backend is OpenRouter rather than opencode. The 5.6 Terra names are retired above so they refuse instead of matching \"terra\" and quietly running 6.1.",
+      "spoken": [
+        "terra",
+        "gpt 6.1 terra",
+        "gpt-6.1-terra",
+        "gpt6.1 terra",
+        "gpt6.1-terra"
+      ],
+      "defaultBackend": "codex",
+      "backends": {
+        "codex": {
+          "standard": {
+            "modelID": "gpt-6.1-terra"
+          }
+        },
+        "openrouter": {
+          "standard": {
+            "providerID": "openrouter",
+            "modelID": "openai/gpt-6.1-terra"
           }
         }
       }

@@ -54,7 +54,7 @@ const LIVE = [
 ];
 
 test("resolves a known alias and route to a split provider/model pair", () => {
-  const resolved = resolveRoute("kimi", "standard", LIVE);
+  const resolved = resolveRoute("kimi-k3", "standard", LIVE);
 
   assert.equal(resolved.providerID, "opencode");
   assert.equal(resolved.modelID, "kimi-k3");
@@ -62,7 +62,7 @@ test("resolves a known alias and route to a split provider/model pair", () => {
 });
 
 test("resolves the fast route to the Fireworks router", () => {
-  const resolved = resolveRoute("kimi", "fast", LIVE);
+  const resolved = resolveRoute("kimi-k3", "fast", LIVE);
   assert.equal(resolved.qualified, "fireworks-ai/accounts/fireworks/routers/kimi-k3-fast");
 });
 
@@ -122,7 +122,7 @@ test("an unavailable route suggests the closest live IDs", () => {
 
 test("resolution without an inventory skips the liveness check", () => {
   const resolved = resolveRoute("kimi", "standard", null);
-  assert.equal(resolved.qualified, "opencode/kimi-k3");
+  assert.equal(resolved.qualified, "opencode/kimi-k3.1-pro");
 });
 
 test("nearestMatches ranks by shared tokens and returns nothing on no overlap", () => {
@@ -134,7 +134,7 @@ test("user overrides merge per alias without deleting sibling routes", () => {
   const config = loadConfig();
   config.routes = {
     aliases: {
-      kimi: { routes: { standard: { providerID: "opencode", modelID: "kimi-k2.6" } } }
+      "kimi-k3": { routes: { standard: { providerID: "opencode", modelID: "kimi-k2.6" } } }
     }
   };
   saveConfig(config);
@@ -142,11 +142,11 @@ test("user overrides merge per alias without deleting sibling routes", () => {
   try {
     // The overridden route changes...
     assert.equal(
-      resolveRoute("kimi", "standard", ["opencode/kimi-k2.6"]).modelID,
+      resolveRoute("kimi-k3", "standard", ["opencode/kimi-k2.6"]).modelID,
       "kimi-k2.6"
     );
     // ...and the one that was not overridden survives.
-    assert.equal(resolveRoute("kimi", "fast", LIVE).providerID, "fireworks-ai");
+    assert.equal(resolveRoute("kimi-k3", "fast", LIVE).providerID, "fireworks-ai");
   } finally {
     const reset = loadConfig();
     reset.routes = {};

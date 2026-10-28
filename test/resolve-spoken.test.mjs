@@ -50,9 +50,9 @@ test("a bare model name takes the standard route", () => {
 });
 
 test("speed words select the fast route without being model names", () => {
-  for (const phrase of ["fast kimi", "quick kimi", "cheap kimi", "kimi fast"]) {
+  for (const phrase of ["fast kimi k3", "quick kimi k3", "cheap kimi k3", "kimi k3 fast"]) {
     const match = resolveSpoken(phrase);
-    assert.equal(match.alias, "kimi", phrase);
+    assert.equal(match.alias, "kimi-k3", phrase);
     assert.equal(match.route, "fast", phrase);
   }
 });
@@ -284,19 +284,19 @@ test("an OpenCode route missing from its inventory still refuses", () => {
 
 test("synonyms resolve", () => {
   assert.equal(resolveSpoken("moonshot").alias, "kimi");
-  assert.equal(resolveSpoken("k3").alias, "kimi");
+  assert.equal(resolveSpoken("k3").alias, "kimi-k3");
   assert.equal(resolveSpoken("zhipu").alias, "glm");
 });
 
 test("case and punctuation do not matter", () => {
-  assert.equal(resolveSpoken("  FAST   Kimi-K3!  ").alias, "kimi");
+  assert.equal(resolveSpoken("  FAST   Kimi-K3!  ").alias, "kimi-k3");
   assert.equal(resolveSpoken("  FAST   Kimi-K3!  ").route, "fast");
 });
 
 test("a name embedded in a sentence still resolves", () => {
   // The caller passes the user's words through, so this is the normal case.
-  assert.equal(resolveSpoken("have fast kimi implement the parser").alias, "kimi");
-  assert.equal(resolveSpoken("have fast kimi implement the parser").route, "fast");
+  assert.equal(resolveSpoken("have fast kimi k3 implement the parser").alias, "kimi-k3");
+  assert.equal(resolveSpoken("have fast kimi k3 implement the parser").route, "fast");
 });
 
 test("a reserved model refuses rather than falling back", () => {
@@ -345,5 +345,36 @@ test("describeAvailable lists every alias with a phrase to say", () => {
   for (const entry of available) {
     assert.ok(entry.alias, "each entry names its alias");
     assert.ok(entry.say, "and offers a phrase the user can say");
+  }
+});
+
+test("kimi means K3.1 Pro and kimi k3 still means exactly K3", () => {
+  for (const phrase of ["kimi", "kimi k3.1", "Kimi K3.1 Pro", "k3.1", "kimi pro"]) {
+    const match = resolveSpoken(phrase);
+    assert.equal(match.alias, "kimi", phrase);
+    assert.equal(match.qualified, "opencode/kimi-k3.1-pro", phrase);
+  }
+  // Whole-word matching keeps "k3" from matching inside "k3.1".
+  assert.equal(resolveSpoken("kimi k3").qualified, "opencode/kimi-k3");
+  assert.equal(resolveSpoken("openrouter kimi").qualified, "openrouter/moonshotai/kimi-k3.1-pro");
+});
+
+test("fast kimi runs K3.1 Pro at standard speed and says so", () => {
+  const match = resolveSpoken("fast kimi");
+  assert.equal(match.alias, "kimi");
+  assert.equal(match.route, "standard");
+  assert.equal(match.substitutedRoute, true);
+});
+
+test("terra means GPT-6.1 Terra, and bare gpt 6.1 asks which one", () => {
+  assert.equal(resolveSpoken("terra").qualified, "codex/gpt-6.1-terra");
+  assert.equal(resolveSpoken("gpt 6.1 terra").alias, "terra");
+  assert.equal(resolveSpoken("openrouter terra").qualified, "openrouter/openai/gpt-6.1-terra");
+  for (const phrase of ["gpt 6.1", "gpt-6.1", "gpt 5.6 terra"]) {
+    assert.throws(
+      () => resolveSpoken(phrase),
+      (error) => error.code === "spoken_retired",
+      phrase
+    );
   }
 });
